@@ -13,6 +13,7 @@ const publicHtmlPages = Object.fromEntries(
 export default defineConfig({
   root: publicRoot,
   envDir: projectRoot,
+  base: "./",
   publicDir: false,
   build: {
     outDir: resolve(projectRoot, "dist"),
