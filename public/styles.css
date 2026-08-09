@@ -637,6 +637,76 @@ output {
   margin-top: -2px;
 }
 
+.optional-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.optional-section summary {
+  min-height: 36px;
+  cursor: pointer;
+  font-weight: 800;
+  color: var(--tt-blue);
+}
+
+.optional-section[open] summary {
+  margin-bottom: 10px;
+}
+
+.compact-cargo-card {
+  gap: 14px;
+}
+
+.freight-choice-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.freight-choice-group legend {
+  margin-bottom: 8px;
+  color: #344154;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.freight-choice-group label,
+.quick-toggle-grid .checkbox,
+.advanced-weight-toggle {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.freight-choice-group input,
+.quick-toggle-grid input,
+.advanced-weight-toggle input {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.quick-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rfq-microcopy {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .review-summary {
   display: grid;
   gap: 12px;
@@ -1640,6 +1710,11 @@ output strong,
 }
 
 @media (max-width: 440px) {
+  .freight-choice-group,
+  .quick-toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
   .public-header .brand-shell {
     flex-direction: column;
     gap: 10px;

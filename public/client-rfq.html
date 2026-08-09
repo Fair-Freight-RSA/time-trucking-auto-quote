@@ -19,33 +19,94 @@
         </section>
         <form class="card rfq-wizard" id="clientRfqForm">
           <div class="wizard-steps" aria-label="RFQ progress">
-            <button type="button" class="active" data-step-button="0">Route</button>
-            <button type="button" data-step-button="1">Load</button>
-            <button type="button" data-step-button="2">Requirements</button>
-            <button type="button" data-step-button="3">Customer</button>
+            <button type="button" class="active" data-step-button="0">Where?</button>
+            <button type="button" data-step-button="1">What?</button>
+            <button type="button" data-step-button="2">When?</button>
+            <button type="button" data-step-button="3">Your details</button>
           </div>
 
           <section class="wizard-panel active" data-step="0">
-            <div class="card-heading"><h2>Route</h2><span>Collection and delivery</span></div>
+            <div class="card-heading"><h2>Where?</h2><span>Collection and delivery</span></div>
             <div class="stack" id="stopsList"></div>
-            <button type="button" id="addStopButton">Add stop</button>
+            <button type="button" id="addStopButton">+ Add another stop</button>
           </section>
 
           <section class="wizard-panel" data-step="1">
-            <div class="card-heading"><h2>Load</h2><span>Cargo, size, and weight</span></div>
-            <div class="grid two">
-              <label>Dedicated or part-load<select name="loadType"><option value="dedicated">Dedicated full load</option><option value="part_load">Part-load</option></select></label>
-              <label>Insurance required<select name="insurance"><option value="no">No</option><option value="yes">Yes</option></select></label>
-            </div>
+            <div class="card-heading"><h2>What are you moving?</h2><span>Freight and total weight</span></div>
             <div class="stack" id="cargoItemsList"></div>
-            <button type="button" id="addCargoItemButton">Add cargo item</button>
+            <button type="button" id="addCargoItemButton" hidden>Add another item</button>
           </section>
 
           <section class="wizard-panel" data-step="2">
-            <div class="card-heading"><h2>Transport Requirements</h2><span>Special handling and risk flags</span></div>
-            <label>Overall special requirements<textarea name="specialRequirements" placeholder="Hazardous goods, abnormal dimensions, temperature control, crane, permits, time sensitivity, site access, or other handling notes."></textarea></label>
+            <div class="card-heading"><h2>When?</h2><span>Date and quote-affecting requirements</span></div>
+            <div class="grid two">
+              <label>Preferred collection date<input name="preferredCollectionDate" type="date" /></label>
+              <label>Delivery date optional<input name="deliveryDate" type="date" /></label>
+            </div>
+            <details class="optional-section">
+              <summary>+ Add time window</summary>
+              <div class="grid two">
+                <label>Collection time window
+                  <select name="collectionTimeWindow" data-time-window-control>
+                    <option value="">Any time</option>
+                    <option value="06:00 - 09:00">06:00 - 09:00</option>
+                    <option value="09:00 - 12:00">09:00 - 12:00</option>
+                    <option value="12:00 - 15:00">12:00 - 15:00</option>
+                    <option value="15:00 - 18:00">15:00 - 18:00</option>
+                    <option value="Specific time">Specific time</option>
+                  </select>
+                </label>
+                <label class="specific-time-field" hidden>Collection specific time<input name="collectionSpecificTime" type="time" /></label>
+                <label>Delivery time window
+                  <select name="deliveryTimeWindow" data-time-window-control>
+                    <option value="">Any time</option>
+                    <option value="06:00 - 09:00">06:00 - 09:00</option>
+                    <option value="09:00 - 12:00">09:00 - 12:00</option>
+                    <option value="12:00 - 15:00">12:00 - 15:00</option>
+                    <option value="15:00 - 18:00">15:00 - 18:00</option>
+                    <option value="Specific time">Specific time</option>
+                  </select>
+                </label>
+                <label class="specific-time-field" hidden>Delivery specific time<input name="deliverySpecificTime" type="time" /></label>
+              </div>
+            </details>
+            <div class="quick-toggle-grid">
+              <label class="checkbox"><input name="dangerousGoods" type="checkbox" /> Dangerous goods</label>
+              <label class="checkbox"><input name="crossBorder" type="checkbox" /> Cross-border</label>
+              <label class="checkbox"><input name="repeatLane" type="checkbox" /> Regular/repeat lane</label>
+              <label class="checkbox"><input name="temperatureControlled" type="checkbox" /> Temperature controlled</label>
+            </div>
+            <details class="optional-section">
+              <summary>+ Add special requirements</summary>
+              <div class="grid two">
+                <label>Loading equipment
+                  <select name="loadingEquipment">
+                    <option value="">Not sure / not needed</option>
+                    <option value="Forklift">Forklift</option>
+                    <option value="Crane">Crane</option>
+                    <option value="Pallet jack">Pallet jack</option>
+                    <option value="Customer equipment">Customer equipment</option>
+                    <option value="Driver assistance required">Driver assistance required</option>
+                  </select>
+                </label>
+                <label>Offloading equipment
+                  <select name="offloadingEquipment">
+                    <option value="">Not sure / not needed</option>
+                    <option value="Forklift">Forklift</option>
+                    <option value="Crane">Crane</option>
+                    <option value="Pallet jack">Pallet jack</option>
+                    <option value="Customer equipment">Customer equipment</option>
+                    <option value="Driver assistance required">Driver assistance required</option>
+                  </select>
+                </label>
+                <label>Insurance required<select name="insurance"><option value="no">No</option><option value="yes">Yes</option></select></label>
+                <label>Cargo value<input name="cargoValue" type="number" min="0" step="0.01" /></label>
+                <label class="checkbox"><input name="fragile" type="checkbox" /> Fragile / extra handling</label>
+              </div>
+              <label>Notes<textarea name="specialRequirements" placeholder="Anything important we should know?"></textarea></label>
+              <label>Attachment notes<textarea name="attachmentNote" placeholder="Photos, packing list, drawings, permits, or documents available."></textarea></label>
+            </details>
             <div class="stack" id="dynamicQuestionsList"></div>
-            <label>Attachment notes<textarea name="attachmentNote" placeholder="List SDS files, drawings, photos, permits, or packing lists that can be supplied."></textarea></label>
           </section>
 
           <section class="wizard-panel" data-step="3">
@@ -64,8 +125,9 @@
             <button type="button" id="prevStepButton">Back</button>
             <button type="button" id="nextStepButton" class="primary">Continue</button>
             <button type="button" id="saveDraftButton">Save draft</button>
-            <button type="submit" class="primary">Submit RFQ</button>
+            <button type="submit" class="primary">REQUEST QUOTE</button>
           </div>
+          <p class="rfq-microcopy">Quick request &middot; No obligation &middot; We'll review your details and send your quote.</p>
           <output id="submitOutput"></output>
         </form>
       </main>

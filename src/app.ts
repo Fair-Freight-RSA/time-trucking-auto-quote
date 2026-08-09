@@ -1,6 +1,5 @@
 import {
   buildAdminDecisionEmail,
-  buildAdminSubmittedEmail,
   buildClientQuoteEmail,
   buildRfqLinkEmail
 } from "./emailPlaceholders";
@@ -419,7 +418,7 @@ function calculateSuggestion(data: {
 }
 
 function calculateWizardSuggestion(items: QuoteItemRecord[], loadType: LoadServiceType, insurance: boolean): QuoteSuggestion {
-  const totalWeight = items.reduce((sum, item) => sum + (item.quantity || 1) * (item.weight_kg ?? 0), 0);
+  const totalWeight = items.reduce((sum, item) => sum + (item.weight_kg ?? 0), 0);
   const totalCube = items.reduce(
     (sum, item) => sum + (item.quantity || 1) * (item.length_m ?? 0) * (item.width_m ?? 0) * (item.height_m ?? 0),
     0
@@ -2178,70 +2177,76 @@ function initClientRfq(): void {
         <h3>${title}</h3>
         ${removable ? `<button type="button" data-remove-stop>Remove</button>` : ""}
       </header>
-      <div class="grid two">
-        <label>Stop type
-          <select data-stop-field="stop_type">
-            <option value="collection"${type === "collection" ? " selected" : ""}>Collection</option>
-            <option value="delivery"${type === "delivery" ? " selected" : ""}>Delivery</option>
-            <option value="warehouse">Warehouse</option>
-            <option value="border">Border</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
-        <div class="date-window-group">
-          <label>Date<input data-stop-date type="date" /></label>
-          <label>Time window
-            <select data-stop-time-window>
-              <option value="Any time">Any time</option>
-              <option value="06:00 - 09:00">06:00 - 09:00</option>
-              <option value="09:00 - 12:00">09:00 - 12:00</option>
-              <option value="12:00 - 15:00">12:00 - 15:00</option>
-              <option value="15:00 - 18:00">15:00 - 18:00</option>
-              <option value="Specific time">Specific time</option>
-            </select>
-          </label>
-          <label class="specific-time-field" hidden>Specific time<input data-stop-specific-time type="time" /></label>
-          <input type="hidden" data-stop-field="date_time_window" />
+      <input type="hidden" data-stop-field="stop_type" value="${type}" />
+      <label>${type === "delivery" ? "Delivery" : type === "collection" ? "Collection" : "Stop address"}<input data-stop-field="address" data-address-autocomplete required placeholder="Start typing an address" /></label>
+      <details class="optional-section stop-details">
+        <summary>+ ${type === "delivery" ? "Delivery" : type === "collection" ? "Collection" : "Stop"} details</summary>
+        <div class="grid two">
+          ${removable ? `
+            <label>Stop type
+              <select data-stop-type-select>
+                <option value="collection"${type === "collection" ? " selected" : ""}>Collection</option>
+                <option value="delivery"${type === "delivery" ? " selected" : ""}>Delivery</option>
+                <option value="warehouse">Warehouse</option>
+                <option value="border">Border</option>
+                <option value="other"${type === "other" ? " selected" : ""}>Other</option>
+              </select>
+            </label>
+          ` : ""}
+          <div class="date-window-group">
+            <label>Date<input data-stop-date type="date" /></label>
+            <label>Time window
+              <select data-stop-time-window>
+                <option value="Any time">Any time</option>
+                <option value="06:00 - 09:00">06:00 - 09:00</option>
+                <option value="09:00 - 12:00">09:00 - 12:00</option>
+                <option value="12:00 - 15:00">12:00 - 15:00</option>
+                <option value="15:00 - 18:00">15:00 - 18:00</option>
+                <option value="Specific time">Specific time</option>
+              </select>
+            </label>
+            <label class="specific-time-field" hidden>Specific time<input data-stop-specific-time type="time" /></label>
+            <input type="hidden" data-stop-field="date_time_window" />
+          </div>
+          <div class="method-group">
+            <label>Loading method
+              <select data-method-select data-stop-method="loading_method">
+                <option value="">Select method</option>
+                <option value="Forklift">Forklift</option>
+                <option value="Crane">Crane</option>
+                <option value="Hand loading">Hand loading</option>
+                <option value="Dock loading">Dock loading</option>
+                <option value="Pallet jack">Pallet jack</option>
+                <option value="Customer equipment">Customer equipment</option>
+                <option value="Driver assistance required">Driver assistance required</option>
+                <option value="Other / Not sure">Other / Not sure</option>
+              </select>
+            </label>
+            <label class="method-detail-field" hidden>Loading detail<input data-method-detail="loading_method" placeholder="Optional detail" /></label>
+            <input type="hidden" data-stop-field="loading_method" />
+          </div>
+          <div class="method-group">
+            <label>Offloading method
+              <select data-method-select data-stop-method="offloading_method">
+                <option value="">Select method</option>
+                <option value="Forklift">Forklift</option>
+                <option value="Crane">Crane</option>
+                <option value="Hand loading">Hand loading</option>
+                <option value="Dock loading">Dock loading</option>
+                <option value="Pallet jack">Pallet jack</option>
+                <option value="Customer equipment">Customer equipment</option>
+                <option value="Driver assistance required">Driver assistance required</option>
+                <option value="Other / Not sure">Other / Not sure</option>
+              </select>
+            </label>
+            <label class="method-detail-field" hidden>Offloading detail<input data-method-detail="offloading_method" placeholder="Optional detail" /></label>
+            <input type="hidden" data-stop-field="offloading_method" />
+          </div>
+          <label>Notes<textarea data-stop-field="notes" placeholder="Access notes, reference numbers, site contact, or instructions."></textarea></label>
+          <label>Contact name<input data-stop-field="contact_name" /></label>
+          <label>Contact phone<input data-stop-field="contact_phone" /></label>
         </div>
-        <label>Address<input data-stop-field="address" data-address-autocomplete required placeholder="Start typing an address" /></label>
-        <label>Notes<textarea data-stop-field="notes"></textarea></label>
-        <label>Contact name<input data-stop-field="contact_name" /></label>
-        <label>Contact phone<input data-stop-field="contact_phone" /></label>
-        <div class="method-group">
-          <label>Loading method
-            <select data-method-select data-stop-method="loading_method">
-              <option value="">Select method</option>
-              <option value="Forklift">Forklift</option>
-              <option value="Crane">Crane</option>
-              <option value="Hand loading">Hand loading</option>
-              <option value="Dock loading">Dock loading</option>
-              <option value="Pallet jack">Pallet jack</option>
-              <option value="Customer equipment">Customer equipment</option>
-              <option value="Driver assistance required">Driver assistance required</option>
-              <option value="Other / Not sure">Other / Not sure</option>
-            </select>
-          </label>
-          <label class="method-detail-field" hidden>Loading detail<input data-method-detail="loading_method" placeholder="Optional detail" /></label>
-          <input type="hidden" data-stop-field="loading_method" />
-        </div>
-        <div class="method-group">
-          <label>Offloading method
-            <select data-method-select data-stop-method="offloading_method">
-              <option value="">Select method</option>
-              <option value="Forklift">Forklift</option>
-              <option value="Crane">Crane</option>
-              <option value="Hand loading">Hand loading</option>
-              <option value="Dock loading">Dock loading</option>
-              <option value="Pallet jack">Pallet jack</option>
-              <option value="Customer equipment">Customer equipment</option>
-              <option value="Driver assistance required">Driver assistance required</option>
-              <option value="Other / Not sure">Other / Not sure</option>
-            </select>
-          </label>
-          <label class="method-detail-field" hidden>Offloading detail<input data-method-detail="offloading_method" placeholder="Optional detail" /></label>
-          <input type="hidden" data-stop-field="offloading_method" />
-        </div>
-      </div>
+      </details>
       <input type="hidden" data-stop-field="stop_order" value="${index}" />
       <input type="hidden" data-stop-field="latitude" />
       <input type="hidden" data-stop-field="longitude" />
@@ -2285,38 +2290,151 @@ function initClientRfq(): void {
   };
 
   const cargoTemplate = (key: string, title: string) => `
-    <article class="nested-card" data-cargo-card data-client-item-key="${key}">
+    <article class="nested-card compact-cargo-card" data-cargo-card data-client-item-key="${key}">
       <header>
         <h3>${title}</h3>
-        <button type="button" data-remove-cargo>Remove</button>
       </header>
+      <fieldset class="freight-choice-group">
+        <legend>Freight type</legend>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="pallets" checked /> Pallets / palletised goods</label>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="cartons" /> Cartons / boxes</label>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="general" /> General freight</label>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="part_load" /> Part load</label>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="full_load" /> Full load</label>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="machinery" /> Machinery / equipment</label>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="produce" /> Produce</label>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="abnormal" /> Abnormal / oversized</label>
+        <label><input type="radio" name="freightType-${key}" data-freight-type value="other" /> Other</label>
+      </fieldset>
       <div class="grid two">
-        <label>Item description<input data-cargo-field="description" required /></label>
-        <label>Cargo category
-          <select data-cargo-field="cargo_category">
-            <option value="general_freight">General freight</option>
-            <option value="machinery">Machinery</option>
-            <option value="dangerous_goods">Dangerous goods</option>
-            <option value="refrigerated">Refrigerated</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
+        <label>Cargo description<input data-cargo-field="description" required placeholder="e.g. 12 pallets of packaged goods" /></label>
+        <label>Approximate TOTAL shipment weight (kg)<input data-total-weight type="number" min="0" step="0.01" required placeholder="21000" /></label>
       </div>
-      <div class="grid four">
-        <label>Quantity<input data-cargo-field="quantity" type="number" min="1" value="1" /></label>
-        <label>Length m<input data-cargo-field="length_m" type="number" min="0" step="0.01" /></label>
-        <label>Width m<input data-cargo-field="width_m" type="number" min="0" step="0.01" /></label>
-        <label>Height m<input data-cargo-field="height_m" type="number" min="0" step="0.01" /></label>
-        <label>Weight kg<input data-cargo-field="weight_kg" type="number" min="0" step="0.01" /></label>
-        <label>Cargo value<input data-cargo-field="cargo_value" type="number" min="0" step="0.01" /></label>
-        <label>Stackable<select data-cargo-field="stackable"><option value="no">No</option><option value="yes">Yes</option></select></label>
-        <label>Fragile<select data-cargo-field="fragile"><option value="no">No</option><option value="yes">Yes</option></select></label>
-        <label>Dangerous goods<select data-cargo-field="dangerous_goods"><option value="no">No</option><option value="yes">Yes</option></select></label>
-        <label>Temperature controlled<select data-cargo-field="temperature_controlled"><option value="no">No</option><option value="yes">Yes</option></select></label>
+      <label class="checkbox advanced-weight-toggle"><input data-weight-per-item-toggle type="checkbox" /> Enter weight per item instead</label>
+      <div class="grid two weight-per-item-fields" hidden>
+        <label>Quantity<input data-cargo-quantity type="number" min="1" value="1" /></label>
+        <label>Item weight (kg)<input data-item-weight type="number" min="0" step="0.01" /></label>
       </div>
-      <label>Item notes<textarea data-cargo-field="notes"></textarea></label>
+      <div class="conditional-cargo-fields" data-conditional-fields></div>
+      <input type="hidden" data-cargo-field="cargo_category" value="general_freight" />
+      <input type="hidden" data-cargo-field="quantity" value="1" />
+      <input type="hidden" data-cargo-field="length_m" />
+      <input type="hidden" data-cargo-field="width_m" />
+      <input type="hidden" data-cargo-field="height_m" />
+      <input type="hidden" data-cargo-field="weight_kg" />
+      <input type="hidden" data-cargo-field="cargo_value" />
+      <input type="hidden" data-cargo-field="stackable" value="no" />
+      <input type="hidden" data-cargo-field="fragile" value="no" />
+      <input type="hidden" data-cargo-field="dangerous_goods" value="no" />
+      <input type="hidden" data-cargo-field="temperature_controlled" value="no" />
+      <input type="hidden" data-cargo-field="notes" />
     </article>
   `;
+
+  const freightCategory = (freightType: string): CargoCategory => {
+    if (freightType === "machinery" || freightType === "abnormal") return "machinery";
+    if (freightType === "produce") return "refrigerated";
+    if (freightType === "other") return "other";
+    return "general_freight";
+  };
+
+  const freightLoadType = (freightType: string): LoadServiceType =>
+    freightType === "full_load" || freightType === "abnormal" ? "dedicated" : "part_load";
+
+  const freightLabel = (freightType: string): string => ({
+    pallets: "Pallets / palletised goods",
+    cartons: "Cartons / boxes",
+    general: "General freight",
+    part_load: "Part load",
+    full_load: "Full load",
+    machinery: "Machinery / equipment",
+    produce: "Produce",
+    abnormal: "Abnormal / oversized",
+    other: "Other"
+  }[freightType] ?? "General freight");
+
+  const selectedFreightType = (card: HTMLElement): string =>
+    card.querySelector<HTMLInputElement>("[data-freight-type]:checked")?.value ?? "pallets";
+
+  const renderConditionalCargoFields = (card: HTMLElement): void => {
+    const target = card.querySelector<HTMLElement>("[data-conditional-fields]");
+    if (!target) return;
+    const type = selectedFreightType(card);
+    if (type === "pallets") {
+      target.innerHTML = `
+        <details class="optional-section" open>
+          <summary>Pallet details</summary>
+          <div class="grid two">
+            <label>Number of pallets<input data-cargo-quantity type="number" min="1" value="1" /></label>
+            <label>Pallet dimensions optional<input data-dimension-note placeholder="e.g. 1.2m x 1m x 1.5m" /></label>
+          </div>
+        </details>
+      `;
+    } else if (type === "cartons") {
+      target.innerHTML = `
+        <details class="optional-section" open>
+          <summary>Carton details</summary>
+          <div class="grid two">
+            <label>Number of cartons<input data-cargo-quantity type="number" min="1" value="1" /></label>
+            <label>Carton dimensions optional<input data-dimension-note placeholder="Average carton size" /></label>
+          </div>
+        </details>
+      `;
+    } else if (type === "machinery") {
+      target.innerHTML = `
+        <details class="optional-section" open>
+          <summary>Machinery details</summary>
+          <div class="grid two">
+            <label>Quantity<input data-cargo-quantity type="number" min="1" value="1" /></label>
+            <label>Dimensions optional<input data-dimension-note placeholder="Length x width x height" /></label>
+          </div>
+        </details>
+      `;
+    } else if (type === "abnormal") {
+      target.innerHTML = `
+        <details class="optional-section" open>
+          <summary>Abnormal-load detail</summary>
+          <div class="grid three">
+            <label>Length m<input data-dimension-field="length_m" type="number" min="0" step="0.01" /></label>
+            <label>Width m<input data-dimension-field="width_m" type="number" min="0" step="0.01" /></label>
+            <label>Height m<input data-dimension-field="height_m" type="number" min="0" step="0.01" /></label>
+          </div>
+          <label>Abnormal-load detail<textarea data-cargo-extra-note placeholder="Permits, escorts, over-height/over-width notes, or lifting constraints."></textarea></label>
+        </details>
+      `;
+    } else {
+      target.innerHTML = "";
+    }
+  };
+
+  const syncCargoCard = (card: HTMLElement): void => {
+    const field = (name: string) => card.querySelector<HTMLInputElement>(`[data-cargo-field="${name}"]`);
+    const totalWeight = Number(card.querySelector<HTMLInputElement>("[data-total-weight]")?.value ?? 0) || 0;
+    const perItem = card.querySelector<HTMLInputElement>("[data-weight-per-item-toggle]")?.checked ?? false;
+    const quantity = Number(card.querySelector<HTMLInputElement>("[data-cargo-quantity]")?.value ?? 1) || 1;
+    const itemWeight = Number(card.querySelector<HTMLInputElement>("[data-item-weight]")?.value ?? 0) || 0;
+    const freightType = selectedFreightType(card);
+    const dimensionNote = card.querySelector<HTMLInputElement>("[data-dimension-note]")?.value.trim() ?? "";
+    const extraNote = card.querySelector<HTMLTextAreaElement>("[data-cargo-extra-note]")?.value.trim() ?? "";
+    const dimensionValue = (name: string) => card.querySelector<HTMLInputElement>(`[data-dimension-field="${name}"]`)?.value.trim() ?? "";
+    const effectiveWeight = perItem ? quantity * itemWeight : totalWeight;
+    const notes = [
+      `Freight type: ${freightLabel(freightType)}`,
+      dimensionNote ? `Dimensions: ${dimensionNote}` : "",
+      extraNote
+    ].filter(Boolean).join(" | ");
+    const set = (name: string, value: string) => {
+      const input = field(name);
+      if (input) input.value = value;
+    };
+    set("cargo_category", freightCategory(freightType));
+    set("quantity", String(quantity));
+    set("length_m", dimensionValue("length_m"));
+    set("width_m", dimensionValue("width_m"));
+    set("height_m", dimensionValue("height_m"));
+    set("weight_kg", String(effectiveWeight));
+    set("notes", notes);
+  };
 
   const addStop = (type = "other", title?: string, removable = true) => {
     stopCounter += 1;
@@ -2329,6 +2447,11 @@ function initClientRfq(): void {
   const addCargoItem = () => {
     cargoCounter += 1;
     cargoItemsList.insertAdjacentHTML("beforeend", cargoTemplate(`item-${cargoCounter}`, `Cargo item ${cargoCounter}`));
+    const card = cargoItemsList.querySelector<HTMLElement>("[data-cargo-card]:last-child");
+    if (card) {
+      renderConditionalCargoFields(card);
+      syncCargoCard(card);
+    }
     refreshDynamicQuestions();
     refreshSummary();
   };
@@ -2345,6 +2468,7 @@ function initClientRfq(): void {
     const windowValue = card.querySelector<HTMLSelectElement>("[data-stop-time-window]")?.value.trim() ?? "";
     const specificTime = card.querySelector<HTMLInputElement>("[data-stop-specific-time]")?.value.trim() ?? "";
     const time = windowValue === "Specific time" ? specificTime : windowValue;
+    if (!date && time === "Any time") return "";
     return [date, time].filter(Boolean).join(" ");
   };
 
@@ -2381,7 +2505,10 @@ function initClientRfq(): void {
 
   const collectCargoItems = (): QuoteItemRecord[] =>
     Array.from(cargoItemsList.querySelectorAll<HTMLElement>("[data-cargo-card]")).map((card) => {
+      syncCargoCard(card);
       const field = (name: string) => card.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[data-cargo-field="${name}"]`)?.value.trim() ?? "";
+      const formChecked = (name: string) => form.querySelector<HTMLInputElement>(`[name="${name}"]`)?.checked ?? false;
+      const formNumber = (name: string) => Number(form.querySelector<HTMLInputElement>(`[name="${name}"]`)?.value ?? 0) || 0;
       return {
         id: card.dataset.clientItemKey ?? crypto.randomUUID(),
         quote_request_id: "",
@@ -2394,10 +2521,10 @@ function initClientRfq(): void {
         height_m: Number(field("height_m")) || 0,
         weight_kg: Number(field("weight_kg")) || 0,
         stackable: field("stackable") === "yes",
-        fragile: field("fragile") === "yes",
-        dangerous_goods: field("dangerous_goods") === "yes",
-        temperature_controlled: field("temperature_controlled") === "yes",
-        cargo_value: Number(field("cargo_value")) || 0,
+        fragile: field("fragile") === "yes" || formChecked("fragile"),
+        dangerous_goods: field("dangerous_goods") === "yes" || formChecked("dangerousGoods"),
+        temperature_controlled: field("temperature_controlled") === "yes" || formChecked("temperatureControlled"),
+        cargo_value: formNumber("cargoValue") || Number(field("cargo_value")) || 0,
         notes: field("notes")
       };
     });
@@ -2447,7 +2574,7 @@ function initClientRfq(): void {
   };
 
   const refreshDynamicQuestions = () => {
-    dynamicQuestionsList.innerHTML = collectCargoItems().map(dynamicQuestionsForItem).join("");
+    dynamicQuestionsList.innerHTML = "";
   };
 
   const buildPayload = (isFinal: boolean) => {
@@ -2458,8 +2585,37 @@ function initClientRfq(): void {
     const firstCollection = stops.find((stop) => stop.stop_type === "collection") ?? stops[0];
     const firstDelivery = stops.find((stop) => stop.stop_type === "delivery") ?? stops[1];
     const insurance = formValue(data, "insurance") === "yes";
-    const loadType = formValue(data, "loadType") as LoadServiceType;
+    const firstCargoCard = cargoItemsList.querySelector<HTMLElement>("[data-cargo-card]");
+    const freightType = firstCargoCard ? selectedFreightType(firstCargoCard) : "pallets";
+    const loadType = freightLoadType(freightType);
     const vehicle = calculateWizardSuggestion(cargoItems, loadType, insurance);
+    const checked = (name: string) => form.querySelector<HTMLInputElement>(`[name="${name}"]`)?.checked ?? false;
+    const selectedTime = (windowName: string, specificName: string) => {
+      const value = formValue(data, windowName);
+      return value === "Specific time" ? formValue(data, specificName) : value;
+    };
+    const formatWindow = (dateValue: string, timeValue: string) => {
+      if (!dateValue && !timeValue) return "";
+      return [dateValue, timeValue || "Any time"].filter(Boolean).join(" ");
+    };
+    const collectionDate = formValue(data, "preferredCollectionDate");
+    const deliveryDate = formValue(data, "deliveryDate");
+    const collectionTime = selectedTime("collectionTimeWindow", "collectionSpecificTime");
+    const deliveryTime = selectedTime("deliveryTimeWindow", "deliverySpecificTime");
+    const requirements = [
+      checked("dangerousGoods") ? "Dangerous goods" : "",
+      checked("crossBorder") ? "Cross-border" : "",
+      checked("repeatLane") ? "Regular/repeat lane" : "",
+      checked("temperatureControlled") ? "Temperature controlled" : "",
+      formValue(data, "loadingEquipment") ? `Loading equipment: ${formValue(data, "loadingEquipment")}` : "",
+      formValue(data, "offloadingEquipment") ? `Offloading equipment: ${formValue(data, "offloadingEquipment")}` : "",
+      checked("fragile") ? "Fragile / extra handling" : "",
+      formValue(data, "specialRequirements")
+    ].filter(Boolean).join(" | ");
+    if (firstCollection && collectionDate) firstCollection.date_time_window = formatWindow(collectionDate, collectionTime);
+    if (firstDelivery && deliveryDate) firstDelivery.date_time_window = formatWindow(deliveryDate, deliveryTime);
+    if (firstCollection && !firstCollection.loading_method) firstCollection.loading_method = formValue(data, "loadingEquipment");
+    if (firstDelivery && !firstDelivery.offloading_method) firstDelivery.offloading_method = formValue(data, "offloadingEquipment");
 
     const payload = {
       company_name: formValue(data, "companyName"),
@@ -2481,9 +2637,9 @@ function initClientRfq(): void {
       offloading_method: firstDelivery?.offloading_method ?? "",
       goods_value: cargoItems.reduce((sum, item) => sum + (item.cargo_value ?? 0), 0),
       insurance_required: insurance,
-      collection_date: "",
-      delivery_date: "",
-      special_requirements: formValue(data, "specialRequirements"),
+      collection_date: collectionDate,
+      delivery_date: deliveryDate,
+      special_requirements: requirements,
       attachment_note: formValue(data, "attachmentNote"),
       suggestion_notes: `${vehicle.suggestedVehicle} / ${vehicle.suggestedTrailer}. ${vehicle.notes}`,
       is_final: isFinal,
@@ -2526,28 +2682,20 @@ function initClientRfq(): void {
     if (isSupabaseConfigured) {
       submitPublicRfq(rawToken, payload)
         .then(async (result) => {
-          const responseUrl = `${window.location.origin}${window.location.pathname.replace("client-rfq.html", "quote-response.html")}?token=${result.response_token}&ref=${result.public_reference}`;
-          let routeStatus = "";
           if (isFinal) {
-            try {
-              const routeResult = await autoRouteSubmittedRfq({
+            void autoRouteSubmittedRfq({
                 quoteRequestId: result.quote_request_id,
                 responseToken: result.response_token,
                 publicReference: result.public_reference
-              });
-              routeStatus = routeResult.status === "success"
-                ? `<span>Automatic route pricing completed with ${escapeHtml(String(routeResult.distanceKm ?? 0))} km / ${escapeHtml(String(routeResult.durationHours ?? 0))} hours.</span>`
-                : `<span>Route automation needs manual review: ${escapeHtml(routeResult.error ?? routeResult.status)}.</span>`;
-            } catch (error) {
-              routeStatus = `<span>Route automation needs manual review: ${escapeHtml(friendlyError(error, "automatic route calculation did not complete"))}.</span>`;
-            }
+              }).catch((error) => console.warn("Route automation did not complete", error));
           }
           output.innerHTML = isFinal
-            ? `<strong>RFQ submitted.</strong><span>Reference ${escapeHtml(result.public_reference)} created. Admin notification event recorded.</span>${routeStatus}<small>Client quote response link: ${escapeHtml(responseUrl)}</small>`
-            : `<strong>Draft saved.</strong><span>Reference ${escapeHtml(result.public_reference)} remains available through the secure RFQ link.</span>`;
+            ? `<strong>Thanks - your quote request has been received.</strong><span>Reference: ${escapeHtml(result.public_reference)}</span><span>Our team will review your request and send your quote shortly.</span>`
+            : `<strong>Draft saved.</strong><span>Reference: ${escapeHtml(result.public_reference)}</span>`;
         })
         .catch((error) => {
-          output.innerHTML = `<strong>${isFinal ? "RFQ submission" : "Draft save"} failed.</strong><span>${escapeHtml(friendlyError(error, "Your RFQ could not be saved. Please check the required fields and try again."))}</span>`;
+          console.warn("Public RFQ submission failed", error);
+          output.innerHTML = `<strong>We could not receive your quote request.</strong><span>Please check the required fields and try again.</span>`;
         });
       return;
     }
@@ -2588,19 +2736,38 @@ function initClientRfq(): void {
       createdAt: new Date().toISOString()
     };
     writeRequests([request, ...readRequests()]);
-    const email = buildAdminSubmittedEmail(request);
     output.innerHTML = isFinal
-      ? `<strong>RFQ submitted.</strong><span>Admin notification event recorded: ${escapeHtml(email.subject)}</span>`
+      ? `<strong>Thanks - your quote request has been received.</strong><span>Reference: Local draft</span><span>Our team will review your request and send your quote shortly.</span>`
       : `<strong>Draft saved.</strong><span>The secure RFQ token remains valid for continuing later.</span>`;
   };
 
   form.addEventListener("input", refreshSummary);
+  form.addEventListener("change", (event) => {
+    const target = event.target as HTMLElement;
+    if (target.matches("[data-time-window-control]")) {
+      const label = target.closest("label");
+      const specificTimeField = label?.nextElementSibling as HTMLElement | null;
+      if (specificTimeField?.classList.contains("specific-time-field")) {
+        specificTimeField.hidden = (target as HTMLSelectElement).value !== "Specific time";
+      }
+    }
+    refreshSummary();
+  });
   cargoItemsList.addEventListener("change", (event) => {
     const target = event.target as HTMLElement;
-    if (target.matches('[data-cargo-field="cargo_category"]')) {
+    const card = target.closest<HTMLElement>("[data-cargo-card]");
+    if (!card) return;
+    if (target.matches("[data-freight-type]")) {
+      renderConditionalCargoFields(card);
+      syncCargoCard(card);
       refreshDynamicQuestions();
-      refreshSummary();
     }
+    if (target.matches("[data-weight-per-item-toggle]")) {
+      const weightFields = card.querySelector<HTMLElement>(".weight-per-item-fields");
+      if (weightFields) weightFields.hidden = !(target as HTMLInputElement).checked;
+    }
+    syncCargoCard(card);
+    refreshSummary();
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -2636,6 +2803,10 @@ function initClientRfq(): void {
     if (target.matches("[data-stop-time-window]")) {
       const specificTimeField = card.querySelector<HTMLElement>(".specific-time-field");
       if (specificTimeField) specificTimeField.hidden = (target as HTMLSelectElement).value !== "Specific time";
+    }
+    if (target.matches("[data-stop-type-select]")) {
+      const typeField = card.querySelector<HTMLInputElement>('[data-stop-field="stop_type"]');
+      if (typeField) typeField.value = (target as HTMLSelectElement).value;
     }
     if (target.matches("[data-method-select]")) {
       const methodName = (target as HTMLSelectElement).dataset.stopMethod;
