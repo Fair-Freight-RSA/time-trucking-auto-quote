@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pricing Settings - Time Trucking Auto-Quote</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-page="pricing">
+    <div class="shell">
+      <header class="header">
+        <div class="brand-shell"><div class="brand-logo" aria-hidden="true"><span>TIME</span><span>TRUCKING</span></div><div class="brand-copy"><strong class="brand-title">TIME TRUCKING</strong><span class="brand-subtitle">Pricing Engine</span></div></div>
+        <nav class="nav">
+          <a data-nav="dashboard" href="./index.html">Dashboard</a>
+          <a data-nav="create" href="./create-rfq-link.html">Quote Requests</a>
+          <a data-nav="review" href="./quote-review.html">Quotes</a>
+          <a data-nav="accepted-loads" href="./accepted-loads.html">Accepted Loads</a>
+          <a data-nav="pricing" href="./pricing-settings.html">Pricing</a>
+          <a data-nav="customers" href="./customers.html">Customers</a>
+          <a data-nav="users" href="./users-dashboard.html">Users</a>
+          <a data-nav="admin-settings" href="./admin-settings.html">Settings</a>
+        </nav>
+      </header>
+      <main class="content">
+        <section class="hero">
+          <p class="eyebrow">Configurable pricing</p>
+          <h1>Pricing settings</h1>
+          <p class="muted">Set company pricing inputs used by the traceable quote calculation engine.</p>
+        </section>
+        <form class="card" id="pricingSettingsForm">
+          <div class="card-heading"><h2>Company settings</h2><span>No hard-coded prices</span></div>
+          <div class="grid three">
+            <label>Current diesel price / litre<input name="fuel_price_per_litre" type="number" min="0" step="0.0001" /></label>
+            <label>Previous diesel price / litre<input name="diesel_previous_price_per_litre" type="number" min="0" step="0.0001" /></label>
+            <label>Diesel baseline / litre<input name="diesel_base_price_per_litre" type="number" min="0" step="0.0001" value="24" /></label>
+            <label>Effective date<input name="diesel_effective_from" type="date" /></label>
+            <label>Provider ID<input name="diesel_provider_id" placeholder="manual / provider key" /></label>
+            <label>Last refresh timestamp<input name="diesel_refreshed_at" type="datetime-local" /></label>
+            <label>Calculated surcharge %<input name="diesel_surcharge_percent" type="number" min="0" step="0.0001" readonly placeholder="Calculated server-side" /></label>
+            <label>Diesel admin override / litre<input name="diesel_admin_override_price_per_litre" type="number" min="0" step="0.0001" placeholder="Manual fallback price" /></label>
+            <label>Manual override enabled
+              <select name="diesel_manual_override_enabled">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </label>
+            <label>Fuel surcharge enabled
+              <select name="fuel_surcharge_enabled">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </label>
+            <label>Vehicle cost profile<input name="vehicle_cost_profile_key" value="default" placeholder="default / 8 ton / lowbed" /></label>
+            <label>Fuel consumption L/100km<input name="fuel_consumption_l_per_100km" type="number" min="0" step="0.0001" /></label>
+            <label>Average tyre cost/km<input name="average_tyre_cost_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Maintenance cost/km<input name="maintenance_cost_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Insurance cost/km<input name="insurance_cost_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Depreciation cost/km<input name="depreciation_cost_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Vehicle overhead/km<input name="vehicle_overhead_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Driver hourly wage<input name="driver_hourly_wage" type="number" min="0" step="0.0001" /></label>
+            <label>Driver overnight allowance<input name="driver_overnight_allowance" type="number" min="0" step="0.01" /></label>
+            <label>Admin overhead %<input name="admin_overhead_percent" type="number" min="0" step="0.0001" /></label>
+            <label>Profit margin %<input name="profit_margin_percent" type="number" min="0" step="0.0001" /></label>
+            <label>VAT %<input name="vat_percent" type="number" min="0" step="0.0001" /></label>
+            <label>Minimum profit<input name="minimum_profit" type="number" min="0" step="0.01" /></label>
+            <label>Maximum discount %<input name="maximum_discount_percent" type="number" min="0" step="0.0001" /></label>
+            <label>Currency<input name="currency" value="ZAR" /></label>
+            <label>Quote validity days<input name="quote_validity_days" type="number" min="1" value="7" /></label>
+          </div>
+          <div class="card-heading"><h2>Dynamic pricing controls</h2><span>Season, route risk, tolls, and margin profile</span></div>
+          <div class="grid three">
+            <label>Low season multiplier<input name="seasonal_low_multiplier" type="number" min="0" step="0.0001" value="0.95" /></label>
+            <label>Normal season multiplier<input name="seasonal_normal_multiplier" type="number" min="0" step="0.0001" value="1" /></label>
+            <label>Busy season multiplier<input name="seasonal_busy_multiplier" type="number" min="0" step="0.0001" value="1.10" /></label>
+            <label>Peak season multiplier<input name="seasonal_peak_multiplier" type="number" min="0" step="0.0001" value="1.20" /></label>
+            <label>Default toll cost<input name="default_toll_cost" type="number" min="0" step="0.01" value="0" /></label>
+            <label>Default route risk surcharge<input name="default_route_risk_surcharge" type="number" min="0" step="0.01" value="0" /></label>
+            <label>Margin profile
+              <select name="margin_profile_key">
+                <option value="minimum">Minimum</option>
+                <option value="target" selected>Target</option>
+                <option value="premium">Premium</option>
+              </select>
+            </label>
+            <label>Margin profile %<input name="margin_profile_percent" type="number" min="0" step="0.0001" placeholder="20" /></label>
+            <label>Margin minimum profit<input name="margin_profile_minimum_profit" type="number" min="0" step="0.01" placeholder="1500" /></label>
+          </div>
+          <div class="card-heading"><h2>Surcharges</h2><span>Configurable rule inputs</span></div>
+          <div class="grid three">
+            <label>Escort surcharge<input name="escort_surcharge" type="number" min="0" step="0.01" /></label>
+            <label>Permit surcharge<input name="permit_surcharge" type="number" min="0" step="0.01" /></label>
+            <label>Hazmat surcharge<input name="hazmat_surcharge" type="number" min="0" step="0.01" /></label>
+            <label>Refrigeration surcharge<input name="refrigeration_surcharge" type="number" min="0" step="0.01" /></label>
+            <label>Crane surcharge<input name="crane_surcharge" type="number" min="0" step="0.01" /></label>
+            <label>Forklift surcharge<input name="forklift_surcharge" type="number" min="0" step="0.01" /></label>
+            <label>High-value threshold<input name="high_value_threshold" type="number" min="0" step="0.01" /></label>
+            <label>High-value surcharge<input name="high_value_surcharge" type="number" min="0" step="0.01" /></label>
+          </div>
+          <button class="primary" type="submit">Save pricing settings</button>
+          <output id="pricingSettingsOutput"></output>
+        </form>
+      </main>
+    </div>
+    <script type="module" src="../src/app.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Settings - Time Trucking Auto-Quote</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-page="admin-settings">
+    <div class="shell">
+      <header class="header">
+        <div class="brand-shell"><div class="brand-logo" aria-hidden="true"><span>TIME</span><span>TRUCKING</span></div><div class="brand-copy"><strong class="brand-title">TIME TRUCKING</strong><span class="brand-subtitle">Admin Settings</span></div></div>
+        <nav class="nav">
+          <a data-nav="dashboard" href="./index.html">Dashboard</a>
+          <a data-nav="create" href="./create-rfq-link.html">Quote Requests</a>
+          <a data-nav="review" href="./quote-review.html">Quotes</a>
+          <a data-nav="accepted-loads" href="./accepted-loads.html">Accepted Loads</a>
+          <a data-nav="pricing" href="./pricing-settings.html">Pricing</a>
+          <a data-nav="customers" href="./customers.html">Customers</a>
+          <a data-nav="users" href="./users-dashboard.html">Users</a>
+          <a data-nav="admin-settings" href="./admin-settings.html">Settings</a>
+        </nav>
+      </header>
+      <main class="content">
+        <section class="hero">
+          <p class="eyebrow">Internal control</p>
+          <h1>Admin settings</h1>
+          <p class="muted">Company branding, email templates, numbering sequences, and audit visibility for approved internal users.</p>
+        </section>
+        <section class="card">
+          <div class="card-heading"><h2>Settings foundation</h2><span>Owner/admin update only</span></div>
+          <div id="adminSettingsContent"></div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="../src/app.ts"></script>
+  </body>
+</html>

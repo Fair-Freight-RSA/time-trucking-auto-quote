@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login - Time Trucking Auto-Quote</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-page="login">
+    <div class="public-shell login-shell">
+      <header class="public-header">
+        <div class="brand-shell"><div class="brand-logo" aria-hidden="true"><span>TIME</span><span>TRUCKING</span></div><div class="brand-copy"><strong class="brand-title">TIME TRUCKING</strong><span class="brand-subtitle">Auto-Quote Internal Login</span></div></div>
+      </header>
+      <main class="content login-content">
+        <section class="hero">
+          <p class="eyebrow">Internal access</p>
+          <h1>Manager Portal login</h1>
+          <p class="muted">Sign in with your approved Time Trucking internal account. Safe. Reliable. On Time.</p>
+        </section>
+        <form class="card login-card" id="loginForm">
+          <div class="card-heading"><h2>Sign in</h2><span>Supabase Auth</span></div>
+          <label>Email
+            <input name="email" type="email" autocomplete="email" required placeholder="you@timetrucking.co.za" />
+          </label>
+          <label>Password
+            <input name="password" type="password" autocomplete="current-password" required placeholder="Password" />
+          </label>
+          <button class="primary" type="submit">Sign in</button>
+          <output id="loginOutput"></output>
+          <p class="muted">Public RFQ and customer quote links do not require login.</p>
+        </form>
+      </main>
+    </div>
+    <script type="module" src="../src/app.ts"></script>
+  </body>
+</html>

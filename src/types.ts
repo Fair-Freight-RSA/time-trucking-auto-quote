@@ -1,0 +1,523 @@
+export type QuoteStatus =
+  | "draft"
+  | "rfq_submitted"
+  | "client_submitted"
+  | "admin_review"
+  | "adjusted"
+  | "approved"
+  | "sent_to_client"
+  | "client_accepted"
+  | "client_declined"
+  | "expired"
+  | "converted_to_load";
+
+export type LoadServiceType = "dedicated" | "part_load";
+export type InternalRole = "owner" | "manager" | "staff" | "viewer";
+export type InternalUserStatus = "active" | "revoked";
+export type StopType = "collection" | "delivery" | "warehouse" | "border" | "other";
+export type CargoCategory = "general_freight" | "machinery" | "dangerous_goods" | "refrigerated" | "other";
+
+export interface InternalUser {
+  id: string;
+  fullName: string;
+  email: string;
+  role: InternalRole;
+  status: InternalUserStatus;
+  canViewAllQuotes: boolean;
+  canManageRfqs: boolean;
+  canApproveQuotes: boolean;
+  canAdjustPricing: boolean;
+  canManageUsers: boolean;
+  invitedBy: string;
+  revokedAt: string;
+  lastLoginAt: string;
+}
+
+export interface InternalUserRecord {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: InternalRole;
+  user_status: InternalUserStatus;
+  can_view_all_quotes: boolean;
+  can_manage_rfqs: boolean;
+  can_approve_quotes: boolean;
+  can_adjust_pricing: boolean;
+  can_manage_pricing_rules: boolean;
+  can_manage_users: boolean;
+  invited_by?: string | null;
+  revoked_at?: string | null;
+  created_at?: string | null;
+  last_login_at: string | null;
+}
+
+export interface QuoteRequest {
+  id: string;
+  status: QuoteStatus;
+  companyName: string;
+  contactPerson: string;
+  email: string;
+  phone: string;
+  collectionAddress: string;
+  deliveryAddress: string;
+  cargoType: string;
+  loadDescription: string;
+  quantity: number;
+  length: number;
+  width: number;
+  height: number;
+  weight: number;
+  stackable: boolean;
+  loadType: LoadServiceType;
+  loadingMethod: string;
+  offloadingMethod: string;
+  goodsValue: number;
+  insurance: boolean;
+  collectionDate: string;
+  deliveryDate: string;
+  specialRequirements: string;
+  attachmentNote: string;
+  suggestedVehicle: string;
+  suggestedTrailer: string;
+  adminNotes: string;
+  quotePrice: number | null;
+  publicReference?: string;
+  responseToken?: string;
+  stops?: QuoteStopRecord[];
+  items?: QuoteItemRecord[];
+  dynamicAnswers?: RfqDynamicAnswerRecord[];
+  vehicleRecommendation?: VehicleRecommendationRecord;
+  transportFlags?: TransportRequirementFlagRecord[];
+  routeEstimate?: RouteEstimateRecord;
+  routeEstimateStops?: RouteEstimateStopRecord[];
+  pricingCalculation?: PricingCalculationRecord;
+  pricingBreakdowns?: PricingBreakdownRecord[];
+  pricingAdjustments?: PricingAdjustmentRecord[];
+  pricingComponentOverrides?: PricingComponentOverrideRecord[];
+  quoteDocuments?: QuoteDocumentRecord[];
+  transportJob?: TransportJobRecord;
+  createdAt: string;
+}
+
+export interface QuoteSuggestion {
+  suggestedVehicle: string;
+  suggestedTrailer: string;
+  notes: string;
+}
+
+export interface QuoteRequestRecord {
+  id: string;
+  status: QuoteStatus;
+  public_reference: string | null;
+  company_name: string;
+  contact_person: string;
+  email: string;
+  phone: string | null;
+  collection_address: string;
+  delivery_address: string;
+  cargo_type: string;
+  load_description: string;
+  stackable: boolean;
+  load_type: LoadServiceType;
+  loading_method: string | null;
+  offloading_method: string | null;
+  goods_value: number | null;
+  insurance_required: boolean;
+  collection_date: string | null;
+  delivery_date: string | null;
+  special_requirements: string | null;
+  attachment_note: string | null;
+  suggestion_notes: string | null;
+  admin_notes: string | null;
+  adjusted_price: number | null;
+  created_at: string;
+  quote_items?: QuoteItemRecord[];
+  quote_stops?: QuoteStopRecord[];
+  rfq_dynamic_answers?: RfqDynamicAnswerRecord[];
+  vehicle_recommendations?: VehicleRecommendationRecord[];
+  transport_requirement_flags?: TransportRequirementFlagRecord[];
+  route_estimates?: RouteEstimateRecord[] | RouteEstimateRecord;
+  pricing_calculations?: PricingCalculationRecord[];
+  pricing_adjustments?: PricingAdjustmentRecord[];
+  pricing_component_overrides?: PricingComponentOverrideRecord[];
+  quote_documents?: QuoteDocumentRecord[];
+  transport_jobs?: TransportJobRecord[];
+}
+
+export interface QuoteItemRecord {
+  id: string;
+  quote_request_id: string;
+  client_item_key?: string | null;
+  description: string | null;
+  cargo_category?: CargoCategory | null;
+  quantity: number;
+  length_m: number | null;
+  width_m: number | null;
+  height_m: number | null;
+  weight_kg: number | null;
+  stackable?: boolean | null;
+  fragile?: boolean | null;
+  dangerous_goods?: boolean | null;
+  temperature_controlled?: boolean | null;
+  cargo_value?: number | null;
+  notes?: string | null;
+}
+
+export interface PublicQuoteResponseRecord extends QuoteRequestRecord {
+  quote_items: QuoteItemRecord[];
+}
+
+export interface QuoteStopRecord {
+  id: string;
+  quote_request_id: string;
+  stop_order: number;
+  sequence_number?: number;
+  stop_type: StopType;
+  address: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  place_id?: string | null;
+  formatted_address?: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  date_time_window: string | null;
+  loading_method: string | null;
+  offloading_method: string | null;
+  notes: string | null;
+}
+
+export interface RfqDynamicAnswerRecord {
+  id: string;
+  quote_request_id: string;
+  cargo_item_id: string | null;
+  answer_group: CargoCategory | string;
+  question_key: string;
+  answer_value: string;
+}
+
+export interface VehicleRecommendationRecord {
+  id: string;
+  quote_request_id: string;
+  recommended_vehicle_type: string;
+  recommended_trailer_type: string;
+  number_of_trucks: number;
+  estimated_payload_utilization_percent: number;
+  estimated_volume_utilization_percent: number;
+  abnormal_load: boolean;
+  permit_required: boolean;
+  escort_recommended: boolean;
+  hazmat_required: boolean;
+  refrigeration_required: boolean;
+  crane_required: boolean;
+  forklift_required: boolean;
+  manager_review_required: boolean;
+  recommendation_notes: string | null;
+  override_vehicle_type: string | null;
+  override_trailer_type: string | null;
+  override_reason: string | null;
+}
+
+export interface TransportRequirementFlagRecord {
+  id: string;
+  quote_request_id: string;
+  vehicle_recommendation_id: string | null;
+  flag_key: string;
+  flag_label: string;
+  severity: string;
+  flag_notes: string | null;
+}
+
+export interface RouteEstimateRecord {
+  id: string;
+  quote_request_id: string;
+  origin_address: string | null;
+  destination_address: string | null;
+  total_distance_km: number;
+  total_duration_hours: number;
+  route_notes: string | null;
+  provider_name: string;
+  confidence_level: string;
+  provider_response?: Record<string, unknown>;
+  external_route_id: string | null;
+  google_maps_url?: string | null;
+  provider_status?: string | null;
+  provider_error?: string | null;
+  estimated_at?: string | null;
+  encoded_polyline?: string | null;
+  toll_status?: string | null;
+  route_risk_status?: string | null;
+  origin_latitude: number | null;
+  origin_longitude: number | null;
+  destination_latitude: number | null;
+  destination_longitude: number | null;
+  manual_distance_km: number | null;
+  manual_duration_hours: number | null;
+  manual_override_reason: string | null;
+  manually_overridden_by: string | null;
+  manually_overridden_at: string | null;
+  route_estimate_stops?: RouteEstimateStopRecord[];
+}
+
+export interface RouteEstimateStopRecord {
+  id: string;
+  route_estimate_id: string;
+  quote_request_id: string;
+  quote_stop_id: string | null;
+  stop_order: number;
+  stop_type: StopType | string | null;
+  address: string;
+  latitude: number | null;
+  longitude: number | null;
+  geocoded: boolean;
+  provider_stop_id: string | null;
+  place_id?: string | null;
+  formatted_address?: string | null;
+  created_at: string;
+}
+
+export interface PricingCalculationRecord {
+  id: string;
+  quote_request_id: string;
+  vehicle_recommendation_id: string | null;
+  pricing_profile_id: string | null;
+  calculation_timestamp: string;
+  rule_version: string;
+  estimated_distance_km: number;
+  estimated_duration_hours: number;
+  total_weight_kg: number;
+  total_volume_m3: number;
+  subtotal: number;
+  profit_amount: number;
+  vat_amount: number;
+  grand_total: number;
+  recommended_selling_price: number;
+  currency: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  calculation_notes: string | null;
+  fuel_price_per_litre?: number | null;
+  fuel_surcharge_amount?: number | null;
+  seasonal_multiplier?: number | null;
+  seasonal_amount?: number | null;
+  toll_amount?: number | null;
+  route_risk_amount?: number | null;
+  margin_profile_key?: string | null;
+  margin_percent?: number | null;
+  dynamic_inputs?: Record<string, unknown>;
+  dynamic_outputs?: Record<string, unknown>;
+  manager_review_required?: boolean | null;
+  pricing_breakdowns?: PricingBreakdownRecord[];
+  pricing_calculation_audit_events?: PricingCalculationAuditEventRecord[];
+}
+
+export interface PricingBreakdownRecord {
+  id: string;
+  pricing_calculation_id: string;
+  quote_request_id: string;
+  line_key: string;
+  line_label: string;
+  quantity: number;
+  unit_rate: number;
+  amount: number;
+  explanation: string | null;
+}
+
+export interface PricingAdjustmentRecord {
+  id: string;
+  quote_request_id: string;
+  pricing_calculation_id: string | null;
+  adjusted_selling_price: number;
+  previous_selling_price: number | null;
+  adjustment_reason: string;
+  adjusted_by: string | null;
+  created_at: string;
+}
+
+export interface PricingCalculationAuditEventRecord {
+  id: string;
+  quote_request_id: string;
+  pricing_calculation_id: string | null;
+  event_type: string;
+  event_payload: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface PricingComponentOverrideRecord {
+  id: string;
+  quote_request_id: string;
+  pricing_calculation_id: string | null;
+  line_key: string;
+  original_amount: number | null;
+  override_amount: number;
+  override_reason: string;
+  overridden_by: string | null;
+  created_at: string;
+}
+
+export interface QuoteDocumentRecord {
+  id: string;
+  quote_request_id: string;
+  quote_number: string;
+  public_reference: string;
+  quote_date: string;
+  validity_date: string;
+  version_number: number;
+  status: string;
+  final_selling_price: number;
+  vat_amount: number;
+  currency: string;
+  accept_link: string | null;
+  decline_link: string | null;
+  pdf_placeholder_url: string | null;
+  pdf_url?: string | null;
+  pdf_storage_path?: string | null;
+  generated_at?: string | null;
+  sent_at?: string | null;
+  email_sent_to?: string | null;
+  email_status?: "pending" | "simulated" | "failed" | "sent" | string;
+  email_error?: string | null;
+  customer_payload: QuoteCustomerPayload;
+  document_payload?: Record<string, unknown>;
+}
+
+export interface PublicQuoteDocumentRecord {
+  quote_document_id: string;
+  quote_request_id: string;
+  quote_number: string;
+  public_reference: string;
+  quote_date: string;
+  validity_date: string;
+  version_number: number;
+  status: QuoteStatus;
+  final_selling_price: number;
+  vat_amount: number;
+  currency: string;
+  accept_link: string | null;
+  decline_link: string | null;
+  pdf_placeholder_url: string | null;
+  pdf_url: string | null;
+  generated_at: string | null;
+  customer_payload: QuoteCustomerPayload;
+}
+
+export interface QuoteCustomerPayload {
+  brand?: {
+    brand_name?: string;
+    brand_line?: string;
+    terms?: string[];
+  };
+  quote_number?: string;
+  public_reference?: string;
+  quote_date?: string;
+  validity_date?: string;
+  version_number?: number;
+  customer?: {
+    company_name?: string;
+    contact_person?: string;
+    email?: string;
+    phone?: string;
+  };
+  stops?: Array<Record<string, unknown>>;
+  cargo_items?: Array<Record<string, unknown>>;
+  route_estimate?: Record<string, unknown>;
+  transport?: Record<string, unknown>;
+  pricing?: {
+    final_selling_price?: number;
+    vat_amount?: number;
+    currency?: string;
+  };
+  links?: {
+    accept_link?: string;
+    decline_link?: string;
+    pdf_placeholder_url?: string;
+  };
+}
+
+export interface CustomerPortalRecord {
+  quote_request_id: string;
+  public_reference: string | null;
+  quote_status: QuoteStatus;
+  company_name: string;
+  contact_person: string;
+  accepted_at: string | null;
+  declined_at: string | null;
+  quote_documents: Array<Record<string, unknown>>;
+}
+
+export interface TransportJobRecord {
+  id: string;
+  quote_request_id: string;
+  quote_document_id: string | null;
+  job_number: string;
+  public_reference: string;
+  job_status: string;
+  company_name: string;
+  contact_person: string;
+  email?: string | null;
+  phone?: string | null;
+  collection_date?: string | null;
+  delivery_date?: string | null;
+  route_summary: Record<string, unknown>;
+  cargo_summary?: Array<Record<string, unknown>>;
+  vehicle_summary: Record<string, unknown>;
+  customer_payload?: Record<string, unknown>;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface InternalSettingsPayload {
+  can_update: boolean;
+  company_branding: Record<string, unknown>;
+  system_settings: SystemSettingRecord[];
+  email_templates: EmailTemplatePlaceholderRecord[];
+  numbering_sequences: NumberingSequenceSettingRecord[];
+  recent_audit_logs: AuditLogRecord[];
+}
+
+export interface SystemSettingRecord {
+  id?: string;
+  setting_key: string;
+  setting_category: string;
+  display_name: string;
+  setting_value: Record<string, unknown>;
+  is_restricted: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface EmailTemplatePlaceholderRecord {
+  template_key: string;
+  template_name: string;
+  subject_placeholder: string;
+  body_placeholder: string;
+  available_variables: string[] | unknown[];
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface NumberingSequenceSettingRecord {
+  sequence_key: string;
+  display_name: string;
+  prefix: string;
+  next_number: number;
+  padding: number;
+  suffix: string | null;
+  last_generated_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AuditLogRecord {
+  id: string;
+  actor_user_id: string | null;
+  actor_role: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  old_values: Record<string, unknown>;
+  new_values: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Users Dashboard - Time Trucking Auto-Quote</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-page="users">
+    <div class="shell">
+      <header class="header">
+        <div class="brand-shell"><div class="brand-logo" aria-hidden="true"><span>TIME</span><span>TRUCKING</span></div><div class="brand-copy"><strong class="brand-title">TIME TRUCKING</strong><span class="brand-subtitle">Internal Access</span></div></div>
+        <nav class="nav">
+          <a data-nav="dashboard" href="./index.html">Dashboard</a>
+          <a data-nav="create" href="./create-rfq-link.html">Quote Requests</a>
+          <a data-nav="review" href="./quote-review.html">Quotes</a>
+          <a data-nav="accepted-loads" href="./accepted-loads.html">Accepted Loads</a>
+          <a data-nav="pricing" href="./pricing-settings.html">Pricing</a>
+          <a data-nav="customers" href="./customers.html">Customers</a>
+          <a data-nav="users" href="./users-dashboard.html">Users</a>
+          <a data-nav="admin-settings" href="./admin-settings.html">Settings</a>
+        </nav>
+      </header>
+      <main class="content">
+        <section class="hero">
+          <p class="eyebrow">Internal access control</p>
+          <h1>Users dashboard</h1>
+          <p class="muted">Manage active Time Trucking internal access records for existing Supabase Auth users.</p>
+        </section>
+        <section class="grid two">
+          <form class="card" id="inviteUserForm">
+            <div class="card-heading"><h2>Add or update internal user</h2><span>Requires existing Supabase Auth user</span></div>
+            <label>Supabase Auth user ID<input name="authUserId" required placeholder="Auth user UUID" /></label>
+            <label>Full name<input name="fullName" required /></label>
+            <label>Email<input name="email" type="email" required /></label>
+            <label>Role
+              <select name="role">
+                <option value="viewer">Viewer</option>
+                <option value="staff">Staff</option>
+                <option value="manager">Manager</option>
+                <option value="owner">Owner</option>
+              </select>
+            </label>
+            <div class="grid two">
+              <label class="checkbox"><input name="canViewAllQuotes" type="checkbox" /> View all quotes</label>
+              <label class="checkbox"><input name="canManageRfqs" type="checkbox" /> Manage RFQs</label>
+              <label class="checkbox"><input name="canApproveQuotes" type="checkbox" /> Approve quotes</label>
+              <label class="checkbox"><input name="canAdjustPricing" type="checkbox" /> Adjust pricing</label>
+              <label class="checkbox"><input name="canManagePricingRules" type="checkbox" /> Manage pricing rules</label>
+              <label class="checkbox"><input name="canManageUsers" type="checkbox" /> Manage users</label>
+            </div>
+            <button class="primary" type="submit">Save internal access</button>
+            <output id="usersOutput"></output>
+          </form>
+          <div class="card">
+            <div class="card-heading"><h2>Access rules</h2><span>Security plan</span></div>
+            <div class="detail-grid">
+              <p><strong>Owner</strong><span>Full access, can manage users, approve quotes, and adjust pricing.</span></p>
+              <p><strong>Manager</strong><span>Can manage RFQs and approve quotes, but cannot remove an owner.</span></p>
+              <p><strong>Staff</strong><span>Assigned/internal quote access only when allowed, no approval by default.</span></p>
+              <p><strong>Viewer</strong><span>Read-only internal access.</span></p>
+            </div>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-heading"><h2>Internal users</h2><span>Owner protected</span></div>
+          <div class="quote-list" id="usersList"></div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="../src/app.ts"></script>
+  </body>
+</html>

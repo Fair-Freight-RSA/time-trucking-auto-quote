@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Client RFQ - Time Trucking Auto-Quote</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-page="client">
+    <div class="public-shell">
+      <header class="public-header">
+        <div class="brand-shell"><div class="brand-logo" aria-hidden="true"><span>TIME</span><span>TRUCKING</span></div><div class="brand-copy"><strong class="brand-title">TIME TRUCKING</strong><span class="brand-subtitle">Secure RFQ</span></div></div>
+      </header>
+      <main class="content rfq-public-content">
+        <section class="hero">
+          <p class="eyebrow">Transport RFQ</p>
+          <h1>Request a transport quote</h1>
+          <p class="muted">Send route, load, transport requirements, and customer details for Time Trucking to review and price.</p>
+        </section>
+        <form class="card rfq-wizard" id="clientRfqForm">
+          <div class="wizard-steps" aria-label="RFQ progress">
+            <button type="button" class="active" data-step-button="0">Route</button>
+            <button type="button" data-step-button="1">Load</button>
+            <button type="button" data-step-button="2">Requirements</button>
+            <button type="button" data-step-button="3">Customer</button>
+          </div>
+
+          <section class="wizard-panel active" data-step="0">
+            <div class="card-heading"><h2>Route</h2><span>Collection and delivery</span></div>
+            <div class="stack" id="stopsList"></div>
+            <button type="button" id="addStopButton">Add stop</button>
+          </section>
+
+          <section class="wizard-panel" data-step="1">
+            <div class="card-heading"><h2>Load</h2><span>Cargo, size, and weight</span></div>
+            <div class="grid two">
+              <label>Dedicated or part-load<select name="loadType"><option value="dedicated">Dedicated full load</option><option value="part_load">Part-load</option></select></label>
+              <label>Insurance required<select name="insurance"><option value="no">No</option><option value="yes">Yes</option></select></label>
+            </div>
+            <div class="stack" id="cargoItemsList"></div>
+            <button type="button" id="addCargoItemButton">Add cargo item</button>
+          </section>
+
+          <section class="wizard-panel" data-step="2">
+            <div class="card-heading"><h2>Transport Requirements</h2><span>Special handling and risk flags</span></div>
+            <label>Overall special requirements<textarea name="specialRequirements" placeholder="Hazardous goods, abnormal dimensions, temperature control, crane, permits, time sensitivity, site access, or other handling notes."></textarea></label>
+            <div class="stack" id="dynamicQuestionsList"></div>
+            <label>Attachment notes<textarea name="attachmentNote" placeholder="List SDS files, drawings, photos, permits, or packing lists that can be supplied."></textarea></label>
+          </section>
+
+          <section class="wizard-panel" data-step="3">
+            <div class="card-heading"><h2>Customer</h2><span>Quote contact and review</span></div>
+            <div class="grid two">
+              <label>Company name<input name="companyName" required /></label>
+              <label>Contact person<input name="contactPerson" required /></label>
+              <label>Email<input name="email" type="email" required /></label>
+              <label>Phone<input name="phone" required /></label>
+            </div>
+            <div class="suggestion" id="suggestionPreview"></div>
+            <div class="review-summary" id="rfqReviewSummary"></div>
+          </section>
+
+          <div class="button-row wizard-actions">
+            <button type="button" id="prevStepButton">Back</button>
+            <button type="button" id="nextStepButton" class="primary">Continue</button>
+            <button type="button" id="saveDraftButton">Save draft</button>
+            <button type="submit" class="primary">Submit RFQ</button>
+          </div>
+          <output id="submitOutput"></output>
+        </form>
+      </main>
+    </div>
+    <script type="module" src="../src/app.ts"></script>
+  </body>
+</html>

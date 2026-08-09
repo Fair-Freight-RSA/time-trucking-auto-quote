@@ -1,0 +1,11 @@
+.env
+.env.local
+.env.*.local
+node_modules/
+dist/
+.vite/
+.DS_Store
+*.log
+supabase/.temp/
+vite-preview.err
+supabase/.branches/

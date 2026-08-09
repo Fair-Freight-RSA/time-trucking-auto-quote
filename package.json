@@ -1,0 +1,20 @@
+{
+  "name": "time-trucking-auto-quote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private mobile-first transport quoting MVP for Time Trucking.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4174",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "test": "node tests/production-readiness.test.js",
+    "test:production-readiness": "node scripts/production-readiness-check.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.101.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vite": "^7.0.0"
+  }
+}
