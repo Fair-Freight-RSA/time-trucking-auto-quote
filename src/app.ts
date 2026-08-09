@@ -2172,11 +2172,11 @@ function initClientRfq(): void {
     refreshSummary();
   };
 
-  const stopTemplate = (index: number, type: string, title: string) => `
-    <article class="nested-card" data-stop-card>
+  const stopTemplate = (index: number, type: string, title: string, removable = true) => `
+    <article class="nested-card" data-stop-card${removable ? "" : " data-primary-stop=\"true\""}>
       <header>
         <h3>${title}</h3>
-        <button type="button" data-remove-stop>Remove</button>
+        ${removable ? `<button type="button" data-remove-stop>Remove</button>` : ""}
       </header>
       <div class="grid two">
         <label>Stop type
@@ -2188,13 +2188,59 @@ function initClientRfq(): void {
             <option value="other">Other</option>
           </select>
         </label>
-        <label>Date/time window<input data-stop-field="date_time_window" placeholder="e.g. 2026-07-10 08:00-12:00" /></label>
+        <div class="date-window-group">
+          <label>Date<input data-stop-date type="date" /></label>
+          <label>Time window
+            <select data-stop-time-window>
+              <option value="Any time">Any time</option>
+              <option value="06:00 - 09:00">06:00 - 09:00</option>
+              <option value="09:00 - 12:00">09:00 - 12:00</option>
+              <option value="12:00 - 15:00">12:00 - 15:00</option>
+              <option value="15:00 - 18:00">15:00 - 18:00</option>
+              <option value="Specific time">Specific time</option>
+            </select>
+          </label>
+          <label class="specific-time-field" hidden>Specific time<input data-stop-specific-time type="time" /></label>
+          <input type="hidden" data-stop-field="date_time_window" />
+        </div>
         <label>Address<input data-stop-field="address" data-address-autocomplete required placeholder="Start typing an address" /></label>
         <label>Notes<textarea data-stop-field="notes"></textarea></label>
         <label>Contact name<input data-stop-field="contact_name" /></label>
         <label>Contact phone<input data-stop-field="contact_phone" /></label>
-        <label>Loading method<input data-stop-field="loading_method" /></label>
-        <label>Offloading method<input data-stop-field="offloading_method" /></label>
+        <div class="method-group">
+          <label>Loading method
+            <select data-method-select data-stop-method="loading_method">
+              <option value="">Select method</option>
+              <option value="Forklift">Forklift</option>
+              <option value="Crane">Crane</option>
+              <option value="Hand loading">Hand loading</option>
+              <option value="Dock loading">Dock loading</option>
+              <option value="Pallet jack">Pallet jack</option>
+              <option value="Customer equipment">Customer equipment</option>
+              <option value="Driver assistance required">Driver assistance required</option>
+              <option value="Other / Not sure">Other / Not sure</option>
+            </select>
+          </label>
+          <label class="method-detail-field" hidden>Loading detail<input data-method-detail="loading_method" placeholder="Optional detail" /></label>
+          <input type="hidden" data-stop-field="loading_method" />
+        </div>
+        <div class="method-group">
+          <label>Offloading method
+            <select data-method-select data-stop-method="offloading_method">
+              <option value="">Select method</option>
+              <option value="Forklift">Forklift</option>
+              <option value="Crane">Crane</option>
+              <option value="Hand loading">Hand loading</option>
+              <option value="Dock loading">Dock loading</option>
+              <option value="Pallet jack">Pallet jack</option>
+              <option value="Customer equipment">Customer equipment</option>
+              <option value="Driver assistance required">Driver assistance required</option>
+              <option value="Other / Not sure">Other / Not sure</option>
+            </select>
+          </label>
+          <label class="method-detail-field" hidden>Offloading detail<input data-method-detail="offloading_method" placeholder="Optional detail" /></label>
+          <input type="hidden" data-stop-field="offloading_method" />
+        </div>
       </div>
       <input type="hidden" data-stop-field="stop_order" value="${index}" />
       <input type="hidden" data-stop-field="latitude" />
@@ -2272,9 +2318,9 @@ function initClientRfq(): void {
     </article>
   `;
 
-  const addStop = (type = "other", title?: string) => {
+  const addStop = (type = "other", title?: string, removable = true) => {
     stopCounter += 1;
-    stopsList.insertAdjacentHTML("beforeend", stopTemplate(stopCounter, type, title ?? `Stop ${stopCounter}`));
+    stopsList.insertAdjacentHTML("beforeend", stopTemplate(stopCounter, type, title ?? `Stop ${stopCounter}`, removable));
     const card = stopsList.querySelector<HTMLElement>("[data-stop-card]:last-child");
     if (card) setupAddressAutocompleteForStop(card);
     refreshSummary();
@@ -2287,8 +2333,33 @@ function initClientRfq(): void {
     refreshSummary();
   };
 
+  const selectedMethodValue = (card: HTMLElement, fieldName: "loading_method" | "offloading_method"): string => {
+    const method = card.querySelector<HTMLSelectElement>(`[data-stop-method="${fieldName}"]`)?.value.trim() ?? "";
+    const detail = card.querySelector<HTMLInputElement>(`[data-method-detail="${fieldName}"]`)?.value.trim() ?? "";
+    if (method === "Other / Not sure" && detail) return `${method}: ${detail}`;
+    return method;
+  };
+
+  const selectedDateTimeWindow = (card: HTMLElement): string => {
+    const date = card.querySelector<HTMLInputElement>("[data-stop-date]")?.value.trim() ?? "";
+    const windowValue = card.querySelector<HTMLSelectElement>("[data-stop-time-window]")?.value.trim() ?? "";
+    const specificTime = card.querySelector<HTMLInputElement>("[data-stop-specific-time]")?.value.trim() ?? "";
+    const time = windowValue === "Specific time" ? specificTime : windowValue;
+    return [date, time].filter(Boolean).join(" ");
+  };
+
+  const syncStopDerivedFields = (card: HTMLElement): void => {
+    const dateWindowField = card.querySelector<HTMLInputElement>('[data-stop-field="date_time_window"]');
+    const loadingField = card.querySelector<HTMLInputElement>('[data-stop-field="loading_method"]');
+    const offloadingField = card.querySelector<HTMLInputElement>('[data-stop-field="offloading_method"]');
+    if (dateWindowField) dateWindowField.value = selectedDateTimeWindow(card);
+    if (loadingField) loadingField.value = selectedMethodValue(card, "loading_method");
+    if (offloadingField) offloadingField.value = selectedMethodValue(card, "offloading_method");
+  };
+
   const collectStops = () =>
     Array.from(stopsList.querySelectorAll<HTMLElement>("[data-stop-card]")).map((card, index) => {
+      syncStopDerivedFields(card);
       const field = (name: string) => card.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[data-stop-field="${name}"]`)?.value.trim() ?? "";
       return {
         stop_order: index + 1,
@@ -2558,6 +2629,30 @@ function initClientRfq(): void {
       refreshSummary();
     }
   });
+  stopsList.addEventListener("change", (event) => {
+    const target = event.target as HTMLElement;
+    const card = target.closest<HTMLElement>("[data-stop-card]");
+    if (!card) return;
+    if (target.matches("[data-stop-time-window]")) {
+      const specificTimeField = card.querySelector<HTMLElement>(".specific-time-field");
+      if (specificTimeField) specificTimeField.hidden = (target as HTMLSelectElement).value !== "Specific time";
+    }
+    if (target.matches("[data-method-select]")) {
+      const methodName = (target as HTMLSelectElement).dataset.stopMethod;
+      const detailField = methodName ? card.querySelector<HTMLElement>(`[data-method-detail="${methodName}"]`)?.closest<HTMLElement>(".method-detail-field") : null;
+      if (detailField) detailField.hidden = (target as HTMLSelectElement).value !== "Other / Not sure";
+    }
+    syncStopDerivedFields(card);
+    refreshSummary();
+  });
+  stopsList.addEventListener("input", (event) => {
+    const target = event.target as HTMLElement;
+    if (!target.matches("[data-stop-date], [data-stop-specific-time], [data-method-detail]")) return;
+    const card = target.closest<HTMLElement>("[data-stop-card]");
+    if (!card) return;
+    syncStopDerivedFields(card);
+    refreshSummary();
+  });
   cargoItemsList.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
     if (target.matches("[data-remove-cargo]")) {
@@ -2567,8 +2662,8 @@ function initClientRfq(): void {
     }
   });
 
-  addStop("collection", "Collection stop");
-  addStop("delivery", "Delivery stop");
+  addStop("collection", "Collection stop", false);
+  addStop("delivery", "Delivery stop", false);
   addCargoItem();
   setStep(0);
 }

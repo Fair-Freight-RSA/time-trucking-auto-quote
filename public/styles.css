@@ -626,6 +626,17 @@ output {
   font-size: 16px;
 }
 
+.date-window-group,
+.method-group {
+  display: grid;
+  gap: 10px;
+}
+
+.specific-time-field,
+.method-detail-field {
+  margin-top: -2px;
+}
+
 .review-summary {
   display: grid;
   gap: 12px;
