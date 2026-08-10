@@ -470,6 +470,45 @@ h2 {
   line-height: 1.5;
 }
 
+.skeleton-card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 10px;
+  min-height: 92px;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.skeleton-card span {
+  animation: ttaq-pulse 1.35s ease-in-out infinite;
+  background: linear-gradient(90deg, #eef3f8, #f8fbff, #eef3f8);
+  background-size: 200% 100%;
+  border-radius: 999px;
+  display: block;
+  height: 12px;
+}
+
+.skeleton-card span:first-child {
+  height: 18px;
+  width: 42%;
+}
+
+.skeleton-card span:nth-child(2) {
+  width: 72%;
+}
+
+.skeleton-card span:nth-child(3) {
+  width: 55%;
+}
+
+@keyframes ttaq-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .quote-list {
   display: grid;
   gap: 10px;
@@ -2013,6 +2052,53 @@ output strong,
 .equipment-profile-row > div:first-child span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.price-hero {
+  background: #f8fbff;
+  border: 1px solid rgba(6, 23, 232, 0.14);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+}
+
+.price-hero span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.price-hero strong {
+  color: var(--tt-blue);
+  font-size: clamp(28px, 5vw, 40px);
+  line-height: 1;
+}
+
+.detail-disclosure {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.detail-disclosure summary {
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 900;
+  list-style-position: inside;
+  padding: 12px 14px;
+}
+
+.detail-disclosure[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-disclosure .table-wrap {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .integration-notice {

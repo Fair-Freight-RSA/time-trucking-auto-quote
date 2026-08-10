@@ -25,12 +25,12 @@
         <section class="hero">
           <p class="eyebrow">Internal access control</p>
           <h1>Users dashboard</h1>
-          <p class="muted">Manage active Time Trucking internal access records for existing Supabase Auth users.</p>
+          <p class="muted">Manage active Time Trucking portal access for approved internal users.</p>
         </section>
         <section class="grid two">
           <form class="card" id="inviteUserForm">
-            <div class="card-heading"><h2>Add or update internal user</h2><span>Requires existing Supabase Auth user</span></div>
-            <label>Supabase Auth user ID<input name="authUserId" required placeholder="Auth user UUID" /></label>
+            <div class="card-heading"><h2>Add or update internal user</h2><span>Requires an existing secure login user</span></div>
+            <label>Login user ID<input name="authUserId" required placeholder="User UUID" /></label>
             <label>Full name<input name="fullName" required /></label>
             <label>Email<input name="email" type="email" required /></label>
             <label>Role

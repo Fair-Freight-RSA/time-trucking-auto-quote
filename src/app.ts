@@ -87,10 +87,10 @@ const statusLabels: Record<QuoteStatus, string> = {
   adjusted: "Adjusted",
   approved: "Approved",
   sent_to_client: "Sent to client",
-  client_accepted: "Client accepted",
-  client_declined: "Rejected / review required",
+  client_accepted: "Accepted",
+  client_declined: "Declined - Review Required",
   expired: "Expired",
-  converted_to_load: "Accepted load"
+  converted_to_load: "Accepted Load"
 };
 
 function readRequests(): QuoteRequest[] {
@@ -138,7 +138,7 @@ function loginRedirectUrl(): string {
   return `./login.html?redirect=${encodeURIComponent(target)}`;
 }
 
-function renderInternalGuard(message = "Supabase Auth is required before internal pages can load."): boolean {
+function renderInternalGuard(message = "Internal login is required before manager pages can load."): boolean {
   if (!isInternalPage()) return true;
   const content = document.querySelector<HTMLElement>(".content");
   if (content) {
@@ -169,7 +169,7 @@ function renderAccessPending(message: string): void {
     </section>
     <section class="card">
       <div class="card-heading"><h2>Time Trucking access control</h2><span>Owner setup required</span></div>
-      <p class="muted">Ask a Time Trucking owner to create or reactivate your internal_users record. Public customer pages remain available without login.</p>
+        <p class="muted">Ask a Time Trucking owner to create or reactivate your portal access record. Public customer pages remain available without login.</p>
       <div class="button-row">
         <button type="button" id="accessPendingLogout">Sign out</button>
         <a class="button primary" href="./login.html">Back to login</a>
@@ -195,7 +195,7 @@ function canAccessCurrentPage(user: InternalUserRecord): boolean {
 
 async function requireInternalAccess(): Promise<boolean> {
   if (!isInternalPage()) return true;
-  if (!isSupabaseConfigured) return renderInternalGuard("Supabase is not configured. Add the Time Trucking Supabase URL and anon key before using internal pages.");
+  if (!isSupabaseConfigured) return renderInternalGuard("The production backend is not configured. Add the Time Trucking app connection before using internal pages.");
   const hasSession = await hasSupabaseSession();
   if (!hasSession) {
     window.location.href = loginRedirectUrl();
@@ -203,7 +203,7 @@ async function requireInternalAccess(): Promise<boolean> {
   }
   const user = await loadCurrentInternalUser();
   if (!user) {
-    renderAccessPending("You are signed in, but your Supabase Auth user does not have a matching Time Trucking internal user record yet.");
+    renderAccessPending("You are signed in, but your secure login does not have a matching Time Trucking portal access record yet.");
     return false;
   }
   if (user.user_status !== "active") {
@@ -371,6 +371,9 @@ function escapeHtml(value: string): string {
 function friendlyError(error: unknown, fallback = "Something went wrong while contacting Time Trucking Auto-Quote. Please check your connection and try again."): string {
   if (!(error instanceof Error) || !error.message.trim()) return fallback;
   const message = error.message.trim();
+  if (/PGRST|SQLSTATE|postgres|PostgREST|Edge Function|stack|rpc/i.test(message)) {
+    return "The workflow could not complete. Please refresh and try again, or ask an owner to review the quote state.";
+  }
   if (message.toLowerCase().includes("jwt") || message.toLowerCase().includes("permission") || message.toLowerCase().includes("not authorized")) {
     return `${message} Please sign in with an approved Time Trucking internal account.`;
   }
@@ -671,6 +674,16 @@ function equipmentSourceLabel(source: string | null | undefined): string {
   return "Either / not decided";
 }
 
+function humanizeKey(value: string | null | undefined, fallback = "Not available"): string {
+  if (!value) return fallback;
+  return value
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
 function formatPercent(value: number | null | undefined): string {
   if (!Number.isFinite(Number(value))) return "0%";
   return `${Number(value).toFixed(2).replace(/\.00$/, "")}%`;
@@ -730,6 +743,20 @@ async function hydrateEquipmentOverrideControls(request: QuoteRequest, canEdit: 
     output.innerHTML = `<strong>Equipment profiles unavailable.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
   }
 
+  const refreshEquipmentAndPricing = async (message: string): Promise<void> => {
+    const record = await loadAdminQuoteRequest(request.id);
+    if (!record) throw new Error("Quote could not be reloaded after recalculation.");
+    const freshRequest = requestFromRecord(record);
+    const vehicleCard = document.querySelector<HTMLElement>(".vehicle-intelligence-card");
+    const pricingCard = document.querySelector<HTMLElement>(".pricing-summary-card");
+    if (vehicleCard) vehicleCard.outerHTML = renderVehicleIntelligenceCard(freshRequest);
+    if (pricingCard) pricingCard.outerHTML = renderPricingSummaryCard(freshRequest);
+    const quotePriceInput = document.querySelector<HTMLInputElement>("[name='quotePrice']");
+    if (quotePriceInput) quotePriceInput.value = String(freshRequest.quotePrice ?? freshRequest.pricingCalculation?.recommended_selling_price ?? "");
+    output.innerHTML = message;
+    await hydrateEquipmentOverrideControls(freshRequest, canEdit, output);
+  };
+
   applyButton.addEventListener("click", async () => {
     const equipmentProfileId = profileSelect.value || null;
     const unitCount = Number(unitInput.value);
@@ -748,6 +775,8 @@ async function hydrateEquipmentOverrideControls(request: QuoteRequest, canEdit: 
       return;
     }
     try {
+      output.innerHTML = `<strong>Recalculating...</strong><span>Updating equipment, unit count, and pricing.</span>`;
+      applyButton.disabled = true;
       await applyEquipmentOverride({
         quoteRequestId: request.id,
         equipmentProfileId,
@@ -755,16 +784,18 @@ async function hydrateEquipmentOverrideControls(request: QuoteRequest, canEdit: 
         equipmentSource: sourceSelect.value as "own_fleet" | "subcontractor" | "either",
         overrideReason
       });
-      output.innerHTML = `<strong>Equipment override saved.</strong><span>Vehicle Intelligence and pricing have been recalculated.</span>`;
-      window.setTimeout(() => window.location.reload(), 900);
+      await refreshEquipmentAndPricing(`<strong>Price updated.</strong><span>Selected equipment, unit count, and pricing are now in sync.</span>`);
     } catch (error) {
       output.innerHTML = `<strong>Equipment override failed.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+      applyButton.disabled = false;
     }
   });
 
   resetButton.addEventListener("click", async () => {
     const unitCount = Number(unitInput.value);
     try {
+      output.innerHTML = `<strong>Recalculating...</strong><span>Restoring the system equipment recommendation.</span>`;
+      resetButton.disabled = true;
       await applyEquipmentOverride({
         quoteRequestId: request.id,
         equipmentProfileId: null,
@@ -772,10 +803,10 @@ async function hydrateEquipmentOverrideControls(request: QuoteRequest, canEdit: 
         equipmentSource: "either",
         overrideReason: "Reset to system recommendation"
       });
-      output.innerHTML = `<strong>System recommendation restored.</strong><span>Pricing has been recalculated from the system-selected equipment.</span>`;
-      window.setTimeout(() => window.location.reload(), 900);
+      await refreshEquipmentAndPricing(`<strong>System recommendation restored.</strong><span>Pricing now follows the system-selected equipment.</span>`);
     } catch (error) {
       output.innerHTML = `<strong>Reset failed.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+      resetButton.disabled = false;
     }
   });
 }
@@ -822,17 +853,17 @@ function renderRouteIntelligenceCard(request: QuoteRequest): string {
     <section class="route-intelligence-card">
       <div class="card-heading">
         <h2>Route Intelligence</h2>
-        <span>${escapeHtml(sourceLabel)} - ${escapeHtml(estimate?.confidence_level ?? "manual")}</span>
+        <span>${escapeHtml(sourceLabel)} - ${escapeHtml(humanizeKey(estimate?.confidence_level ?? "manual"))}</span>
       </div>
       <div class="grid three">
         <p><strong>Origin</strong><span>${escapeHtml(estimate?.origin_address ?? request.collectionAddress)}</span></p>
         <p><strong>Destination</strong><span>${escapeHtml(estimate?.destination_address ?? request.deliveryAddress)}</span></p>
-        <p><strong>Estimate</strong><span>${distance} km / ${duration} hrs</span></p>
+        <p><strong>Estimate</strong><span>${formatDistanceKm(distance)} / ${formatDurationHours(duration)}</span></p>
         <p><strong>Stop count</strong><span>${routeStops.length || routeAddresses.length}</span></p>
         <p><strong>Calculated</strong><span>${escapeHtml(formatDateTime(calculatedAt))}</span></p>
-        <p><strong>Source</strong><span>${escapeHtml(providerLabel)}</span></p>
-        <p><strong>Tolls</strong><span>${escapeHtml(tollStatus)} - pricing fallback remains explicit</span></p>
-        <p><strong>Route risk</strong><span>${escapeHtml(riskStatus)}</span></p>
+        <p><strong>Source</strong><span>${escapeHtml(humanizeKey(providerLabel))}</span></p>
+        <p><strong>Tolls</strong><span>${escapeHtml(humanizeKey(tollStatus))}</span></p>
+        <p><strong>Route risk</strong><span>${escapeHtml(humanizeKey(riskStatus))}</span></p>
         <p><strong>Override</strong><span>${estimate?.manually_overridden_at ? `Overridden ${escapeHtml(formatDateTime(estimate.manually_overridden_at))}` : "No manual override"}</span></p>
       </div>
       ${renderRouteMapPreview(request)}
@@ -857,11 +888,11 @@ function renderRouteIntelligenceCard(request: QuoteRequest): string {
       </div>
       <div class="button-row">
         <button type="button" id="googleRouteEstimateButton">Calculate Route</button>
-        <button class="primary" type="button" id="regeneratePricingButton">Regenerate pricing</button>
+        <button class="primary" type="button" id="regeneratePricingButton">Update pricing</button>
         ${mapsUrl ? `<a class="button small" href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>` : ""}
         <span class="muted">${escapeHtml(googleReadyLabel)}. Manual fallback remains available.</span>
       </div>
-      <p class="muted">${escapeHtml(estimate?.route_notes ?? "Manual/admin-entered distance and duration feed the pricing engine.")}</p>
+      <p class="muted">${escapeHtml(estimate?.route_notes ?? "Route distance and duration feed the pricing engine.")}</p>
       ${estimate?.provider_error ? `<p class="muted"><strong>Provider note:</strong> ${escapeHtml(estimate.provider_error)}</p>` : ""}
     </section>
   `;
@@ -870,8 +901,29 @@ function renderRouteIntelligenceCard(request: QuoteRequest): string {
 function money(value: number | null | undefined, currencyCode = "ZAR"): string {
   return new Intl.NumberFormat("en-ZA", {
     style: "currency",
-    currency: currencyCode
-  }).format(value ?? 0);
+    currency: currencyCode,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(value ?? 0).replace(/\u00a0/g, " ");
+}
+
+function formatNumber(value: number | null | undefined, maximumFractionDigits = 1): string {
+  return new Intl.NumberFormat("en-ZA", {
+    maximumFractionDigits,
+    minimumFractionDigits: 0
+  }).format(Number(value ?? 0)).replace(/\u00a0/g, " ");
+}
+
+function formatDistanceKm(value: number | null | undefined): string {
+  return `${formatNumber(value, 1)} km`;
+}
+
+function formatDurationHours(value: number | null | undefined): string {
+  const totalMinutes = Math.round(Number(value ?? 0) * 60);
+  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "0 h";
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
 }
 
 function routeAddressesForQuote(request: QuoteRequest): string[] {
@@ -1148,34 +1200,48 @@ function renderPricingSummaryCard(request: QuoteRequest): string {
   const dynamicInputs = calculation.dynamic_inputs ?? {};
   const dynamicOutputs = calculation.dynamic_outputs ?? {};
   const auditEvents = calculation.pricing_calculation_audit_events ?? [];
-  const dynamicLines = breakdowns.filter((line) =>
+  const meaningfulBreakdowns = breakdowns.filter((line) => Math.abs(Number(line.amount ?? 0)) > 0.005);
+  const dynamicLines = meaningfulBreakdowns.filter((line) =>
     ["fuel_surcharge", "seasonal_multiplier", "tolls", "route_risk", "profit"].includes(line.line_key)
   );
+  const operatingCost = meaningfulBreakdowns
+    .filter((line) => ["fuel", "driver", "maintenance", "tyres", "insurance", "depreciation"].includes(line.line_key))
+    .reduce((total, line) => total + Number(line.amount ?? 0), 0);
+  const adjustmentsTotal = meaningfulBreakdowns
+    .filter((line) => !["fuel", "driver", "maintenance", "tyres", "insurance", "depreciation", "profit", "vat"].includes(line.line_key))
+    .reduce((total, line) => total + Number(line.amount ?? 0), 0);
 
   return `
     <section class="pricing-summary-card">
       <div class="card-heading"><h2>Pricing Summary</h2><span>${escapeHtml(calculation.rule_version)}${calculation.manager_review_required ? " - manager review required" : ""}</span></div>
+      <div class="price-hero">
+        <span>Recommended selling price</span>
+        <strong>${money(calculation.recommended_selling_price, calculation.currency)}</strong>
+        <small>Includes ${money(calculation.vat_amount, calculation.currency)} VAT</small>
+      </div>
       <div class="grid three">
-        <p><strong>Estimated distance</strong><span>${calculation.estimated_distance_km} km</span></p>
-        <p><strong>Estimated duration</strong><span>${calculation.estimated_duration_hours} hrs</span></p>
-        <p><strong>Recommended price</strong><span>${money(calculation.recommended_selling_price, calculation.currency)}</span></p>
-        <p><strong>Subtotal</strong><span>${money(calculation.subtotal, calculation.currency)}</span></p>
-        <p><strong>Profit</strong><span>${money(calculation.profit_amount, calculation.currency)}</span></p>
+        <p><strong>Route used</strong><span>${formatDistanceKm(calculation.estimated_distance_km)} / ${formatDurationHours(calculation.estimated_duration_hours)}</span></p>
+        <p><strong>Estimated operating cost</strong><span>${money(operatingCost, calculation.currency)}</span></p>
+        <p><strong>Adjustments</strong><span>${money(adjustmentsTotal, calculation.currency)}</span></p>
+        <p><strong>Profit / margin</strong><span>${money(calculation.profit_amount, calculation.currency)}</span></p>
         <p><strong>VAT</strong><span>${money(calculation.vat_amount, calculation.currency)}</span></p>
         <p><strong>Diesel price</strong><span>${money(calculation.fuel_price_per_litre ?? Number(dynamicInputs.diesel_price_per_litre ?? 0), calculation.currency)} / L</span></p>
-        <p><strong>Seasonal multiplier</strong><span>${calculation.seasonal_multiplier ?? dynamicInputs.seasonal_multiplier ?? 1}x</span></p>
+        <p><strong>Seasonal multiplier</strong><span>${formatNumber(Number(calculation.seasonal_multiplier ?? dynamicInputs.seasonal_multiplier ?? 1), 2)}x</span></p>
         <p><strong>Margin profile</strong><span>${escapeHtml(calculation.margin_profile_key ?? dynamicValue(dynamicInputs, "margin_profile", "target"))}</span></p>
       </div>
-      <div class="table-wrap">
+      <details class="detail-disclosure">
+        <summary>Detailed pricing lines</summary>
+        <div class="table-wrap">
         <table>
           <thead><tr><th>Line</th><th>Quantity</th><th>Rate</th><th>Amount</th></tr></thead>
           <tbody>
-            ${breakdowns.map((line) => `<tr><td>${escapeHtml(line.line_label)}<br><small>${escapeHtml(line.explanation ?? "")}</small></td><td>${line.quantity}</td><td>${money(line.unit_rate, calculation.currency)}</td><td>${money(line.amount, calculation.currency)}</td></tr>`).join("")}
+            ${meaningfulBreakdowns.map((line) => `<tr><td>${escapeHtml(line.line_label)}<br><small>${escapeHtml(line.explanation ?? "")}</small></td><td>${formatNumber(line.quantity, 2)}</td><td>${money(line.unit_rate, calculation.currency)}</td><td>${money(line.amount, calculation.currency)}</td></tr>`).join("")}
           </tbody>
         </table>
-      </div>
+        </div>
+      </details>
       <div class="summary-block">
-        <h3>Explain Calculation</h3>
+        <h3>Calculation drivers</h3>
         <div class="grid three">
           <p><strong>Fuel surcharge</strong><span>${money(calculation.fuel_surcharge_amount ?? Number(dynamicOutputs.fuel_surcharge_amount ?? 0), calculation.currency)}</span></p>
           <p><strong>Toll framework</strong><span>${money(calculation.toll_amount ?? Number(dynamicOutputs.toll_amount ?? 0), calculation.currency)}</span></p>
@@ -1221,7 +1287,7 @@ function valueText(value: unknown, fallback = "Not supplied"): string {
 
 function formatKg(value: number): string {
   if (!Number.isFinite(value)) return "0";
-  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
+  return formatNumber(value, 2);
 }
 
 type CargoWeightLike = {
@@ -1342,7 +1408,7 @@ function renderAdminSettings(settings: InternalSettingsPayload): string {
     <form id="adminSettingsForm" class="stack">
       <div class="notice ${canUpdate ? "" : "muted"}">
         <strong>${canUpdate ? "Owner/admin edit access active" : "Read-only internal settings view"}</strong>
-        <span>${canUpdate ? "Changes are written through audited Supabase RPCs." : "Managers and viewers can read safe settings only. Restricted updates require owner/admin access."}</span>
+        <span>${canUpdate ? "Changes are saved through audited owner controls." : "Managers and viewers can read safe settings only. Restricted updates require owner access."}</span>
       </div>
 
       <section>
@@ -1384,7 +1450,7 @@ function renderAdminSettings(settings: InternalSettingsPayload): string {
       </section>
 
       <section>
-        <div class="card-heading"><h2>System settings</h2><span>JSON foundations</span></div>
+        <div class="card-heading"><h2>Operational settings</h2><span>Advanced configuration</span></div>
         <div class="grid two">
           ${settings.system_settings.map((setting, index) => renderSystemSetting(setting, index, canUpdate)).join("")}
         </div>
@@ -1441,8 +1507,8 @@ function renderCustomerQuoteDocument(document: PublicQuoteDocumentRecord): strin
         </div>
       </header>
       <section class="grid three">
-        <p><strong>Quote date</strong><span>${escapeHtml(document.quote_date)}</span></p>
-        <p><strong>Valid until</strong><span>${escapeHtml(document.validity_date)}</span></p>
+        <p><strong>Quote date</strong><span>${escapeHtml(formatDateOnly(document.quote_date))}</span></p>
+        <p><strong>Valid until</strong><span>${escapeHtml(formatDateOnly(document.validity_date))}</span></p>
         <p><strong>Status</strong><span>${statusLabels[document.status]}</span></p>
       </section>
       <section class="summary-block">
@@ -1455,7 +1521,7 @@ function renderCustomerQuoteDocument(document: PublicQuoteDocumentRecord): strin
         <h3>Route</h3>
         <p><strong>Origin</strong><span>${escapeHtml(valueText(route.origin_address))}</span></p>
         <p><strong>Destination</strong><span>${escapeHtml(valueText(route.destination_address))}</span></p>
-        <p><strong>Estimate</strong><span>${escapeHtml(valueText(route.total_distance_km, "0"))} km / ${escapeHtml(valueText(route.total_duration_hours, "0"))} hrs</span></p>
+        <p><strong>Estimate</strong><span>${formatDistanceKm(Number(route.total_distance_km ?? 0))} / ${formatDurationHours(Number(route.total_duration_hours ?? 0))}</span></p>
       </section>
       <section class="summary-block">
         <h3>Stops</h3>
@@ -1630,6 +1696,14 @@ function renderMetricCard(label: string, value: string | number, icon: string, h
   `;
 }
 
+function skeletonCards(count = 4): string {
+  return Array.from({ length: count }, () => `
+    <article class="skeleton-card" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </article>
+  `).join("");
+}
+
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "Date pending";
   const date = new Date(value);
@@ -1639,6 +1713,17 @@ function formatDateTime(value: string | null | undefined): string {
     month: "short",
     hour: "2-digit",
     minute: "2-digit"
+  }).format(date);
+}
+
+function formatDateOnly(value: string | null | undefined): string {
+  if (!value) return "Date pending";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-ZA", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric"
   }).format(date);
 }
 
@@ -1671,10 +1756,16 @@ async function initLogin(): Promise<void> {
   if (!isLoginPage()) return;
   const form = document.querySelector<HTMLFormElement>("#loginForm");
   const output = document.querySelector<HTMLElement>("#loginOutput");
+  const passwordInput = document.querySelector<HTMLInputElement>("#loginPassword");
+  const showPasswordToggle = document.querySelector<HTMLInputElement>("#showPasswordToggle");
   if (!form || !output) return;
 
+  showPasswordToggle?.addEventListener("change", () => {
+    if (passwordInput) passwordInput.type = showPasswordToggle.checked ? "text" : "password";
+  });
+
   if (!isSupabaseConfigured) {
-    output.innerHTML = `<strong>Supabase not configured.</strong><span>Add the Time Trucking Supabase URL and anon key before logging in.</span>`;
+    output.innerHTML = `<strong>Backend not configured.</strong><span>Add the Time Trucking app connection before logging in.</span>`;
     return;
   }
 
@@ -1746,11 +1837,11 @@ async function initDashboard(): Promise<void> {
     `;
   }
 
-  counts.innerHTML = `<p class="muted">Loading live dashboard metrics...</p>`;
+  counts.innerHTML = skeletonCards(6);
   actions.innerHTML = "";
-  list.innerHTML = `<p class="muted">Loading RFQ and quote queue...</p>`;
-  if (trendPanel) trendPanel.innerHTML = `<p class="muted">Loading quote analytics...</p>`;
-  if (recentActivity) recentActivity.innerHTML = `<p class="muted">Loading recent activity...</p>`;
+  list.innerHTML = skeletonCards(3);
+  if (trendPanel) trendPanel.innerHTML = skeletonCards(1);
+  if (recentActivity) recentActivity.innerHTML = skeletonCards(3);
 
   let requests: QuoteRequest[] = [];
   if (!isSupabaseConfigured) {
@@ -1792,10 +1883,10 @@ async function initDashboard(): Promise<void> {
 
   counts.innerHTML = `
     ${renderMetricCard("New Requests", newRfqCount, "rfq", "Fresh customer submissions", "./quote-review.html?status=client_submitted")}
-    ${renderMetricCard("Awaiting Review", reviewCount, "review", "Needs manager attention", "./quote-review.html?status=admin_review")}
+    ${renderMetricCard("Needs Review", reviewCount, "review", "Manager decision required", "./quote-review.html?status=admin_review")}
     ${renderMetricCard("Approved", approvedCount, "approved", "Ready to send", "./quote-review.html?status=approved")}
-    ${renderMetricCard("Sent to Customer", sentCount, "sent", "Awaiting customer response", "./quote-review.html?status=sent_to_client")}
-    ${renderMetricCard("Rejected / Review", declinedCount, "warning", "Customer declined or requested review", "./quote-review.html?status=client_declined")}
+    ${renderMetricCard("Sent", sentCount, "sent", "Awaiting customer response", "./quote-review.html?status=sent_to_client")}
+    ${renderMetricCard("Declined", declinedCount, "warning", "Review required", "./quote-review.html?status=client_declined")}
     ${renderMetricCard("Accepted Loads", acceptedCount, "accepted", `${conversionRate}% close rate`, "./accepted-loads.html")}
   `;
   if (statusArea) {
@@ -1837,7 +1928,7 @@ async function initDashboard(): Promise<void> {
       <article class="quote-row">
         <div>
           <strong>${escapeHtml(request.companyName)}</strong>
-          <span>${escapeHtml(request.publicReference ?? request.id)} - ${escapeHtml(request.collectionAddress)} to ${escapeHtml(request.deliveryAddress)}</span>
+          <span>${escapeHtml(request.publicReference ?? request.id)} - ${escapeHtml(quoteShortRoute(request))}</span>
         </div>
         <div>
           <span class="badge">${statusLabels[request.status]}</span>
@@ -2123,7 +2214,7 @@ async function initUsersDashboard(): Promise<void> {
   if (!list || !form || !output) return;
 
   if (!isSupabaseConfigured) {
-    list.innerHTML = `<p class="muted">Configure Supabase before managing internal users. Users are stored in the Time Trucking ` + "`internal_users`" + ` table and must match existing Supabase Auth user IDs.</p>`;
+    list.innerHTML = `<p class="muted">Connect the production backend before managing internal portal users.</p>`;
     form.hidden = true;
     return;
   }
@@ -2131,7 +2222,7 @@ async function initUsersDashboard(): Promise<void> {
   const canManage = currentInternalUser?.role === "owner" || Boolean(currentInternalUser?.can_manage_users);
 
   const render = async () => {
-    list.innerHTML = `<p class="muted">Loading internal users...</p>`;
+    list.innerHTML = skeletonCards(3);
     let users: InternalUserRecord[] = [];
     try {
       users = await listInternalUsers();
@@ -2155,7 +2246,7 @@ async function initUsersDashboard(): Promise<void> {
           ${canManage && user.user_status === "revoked" ? `<button class="small" type="button" data-reactivate-user="${escapeHtml(user.id)}">Reactivate</button>` : ""}
         </div>
       </article>
-    `).join("") : `<p class="muted">No internal users are visible. Create a Supabase Auth user first, then add the matching auth user ID here.</p>`;
+    `).join("") : `<div class="empty-state"><strong>No internal users visible</strong><span>Create a secure login user first, then add the matching user ID here.</span></div>`;
 
     list.querySelectorAll<HTMLButtonElement>("[data-revoke-user]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -2201,7 +2292,7 @@ async function initUsersDashboard(): Promise<void> {
       canManageUsers: role === "owner"
     };
     if (!authUserId) {
-      output.innerHTML = `<strong>Auth user ID required.</strong><span>Create the user in Supabase Auth first, then paste the Auth user UUID here.</span>`;
+      output.innerHTML = `<strong>Login user ID required.</strong><span>Create the secure login user first, then paste the matching user UUID here.</span>`;
       return;
     }
     try {
@@ -2217,7 +2308,7 @@ async function initUsersDashboard(): Promise<void> {
         canManagePricingRules: roleDefaults.canManagePricingRules || Boolean(data.get("canManagePricingRules")),
         canManageUsers: roleDefaults.canManageUsers || Boolean(data.get("canManageUsers"))
       });
-      output.innerHTML = `<strong>User access saved.</strong><span>The internal user record now matches an existing Supabase Auth user.</span>`;
+      output.innerHTML = `<strong>User access saved.</strong><span>The portal access record now matches the secure login user.</span>`;
       form.reset();
       await render();
     } catch (error) {
@@ -3297,7 +3388,10 @@ function quoteTotalWeight(request: QuoteRequest): number {
 }
 
 function quoteVehicleLabel(request: QuoteRequest): string {
-  return request.vehicleRecommendation?.recommended_vehicle_type ?? request.suggestedVehicle ?? "Vehicle review";
+  return request.vehicleRecommendation?.override_vehicle_type
+    ?? request.vehicleRecommendation?.recommended_vehicle_type
+    ?? request.suggestedVehicle
+    ?? "Vehicle review";
 }
 
 function quoteSearchText(request: QuoteRequest): string {
@@ -3435,11 +3529,16 @@ async function initQuoteReview(): Promise<void> {
 
   detail.innerHTML = `
     <div class="detail-grid">
-      ${renderVehicleIntelligenceCard(request)}
-      ${renderRouteIntelligenceCard(request)}
-      ${renderPricingSummaryCard(request)}
-      <p><strong>Reference</strong><span>${escapeHtml(request.publicReference ?? request.id)}</span></p>
-      <p><strong>Client</strong><span>${escapeHtml(request.companyName)} - ${escapeHtml(request.contactPerson)}</span></p>
+      <section class="summary-block quote-review-summary">
+        <div class="card-heading"><h2>RFQ Summary</h2><span>${escapeHtml(statusLabels[request.status] ?? request.status)}</span></div>
+        <div class="grid three">
+          <p><strong>Reference</strong><span>${escapeHtml(request.publicReference ?? request.id)}</span></p>
+          <p><strong>Customer</strong><span>${escapeHtml(request.companyName)}</span></p>
+          <p><strong>Contact</strong><span>${escapeHtml(request.contactPerson)} - ${escapeHtml(request.email)}</span></p>
+          <p><strong>Total weight</strong><span>${formatKg(quoteTotalWeight(request))} kg</span></p>
+          <p><strong>Accepted load</strong><span>${request.transportJob ? `${escapeHtml(request.transportJob.job_number)}` : "Created after customer acceptance"}</span></p>
+        </div>
+      </section>
       <div class="summary-block">
         <h3>Stops</h3>
         ${
@@ -3456,18 +3555,11 @@ async function initQuoteReview(): Promise<void> {
             : `<p>${escapeHtml(request.quantity.toString())} x ${escapeHtml(request.cargoType)} - ${request.length}m x ${request.width}m x ${request.height}m, ${request.weight}kg each</p>`
         }
       </div>
-      <div class="summary-block">
-        <h3>Dynamic answers</h3>
-        ${
-          dynamicAnswers.length
-            ? dynamicAnswers.map((answer) => `<p><strong>${escapeHtml(answer.answer_group)} / ${escapeHtml(answer.question_key.replaceAll("_", " "))}</strong>: ${escapeHtml(answer.answer_value || "Not supplied")}</p>`).join("")
-            : `<p>No dynamic answers captured.</p>`
-        }
-      </div>
-      <p><strong>Vehicle/trailer suggestion</strong><span>${escapeHtml(request.suggestedVehicle)} / ${escapeHtml(request.suggestedTrailer)}</span></p>
+      ${dynamicAnswers.length ? `<div class="summary-block"><h3>Additional RFQ details</h3>${dynamicAnswers.map((answer) => `<p><strong>${escapeHtml(answer.question_key.replaceAll("_", " "))}</strong>: ${escapeHtml(answer.answer_value || "Not supplied")}</p>`).join("")}</div>` : ""}
+      ${renderRouteIntelligenceCard(request)}
+      ${renderVehicleIntelligenceCard(request)}
+      ${renderPricingSummaryCard(request)}
       <p><strong>Special requirements</strong><span>${escapeHtml(request.specialRequirements || "None captured")}</span></p>
-      <p><strong>Status</strong><span>${statusLabels[request.status]}</span></p>
-      <p><strong>Accepted load</strong><span>${request.transportJob ? `${escapeHtml(request.transportJob.job_number)}` : "Created automatically after customer acceptance"}</span></p>
     </div>
   `;
   void hydrateRouteMapPreview(request);

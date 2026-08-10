@@ -88,6 +88,24 @@ test("financial rounding vector is deterministic", () => {
   });
 });
 
+test("final polish keeps customer and manager UI premium and nontechnical", () => {
+  const app = read("src/app.ts");
+  const styles = read("public/styles.css");
+  const login = read("public/login.html");
+  const users = read("public/users-dashboard.html");
+
+  assert.ok(app.includes("refreshEquipmentAndPricing"), "equipment override should refresh quote review pricing in place");
+  assert.ok(app.includes("Price updated."), "equipment override should confirm repriced selections");
+  assert.ok(app.includes("System recommendation restored."), "equipment reset should confirm system pricing restored");
+  assert.ok(app.includes("Recommended selling price"), "pricing summary should make the final price prominent");
+  assert.ok(app.includes("Detailed pricing lines"), "internal calculation detail should be available but secondary");
+  assert.ok(styles.includes(".price-hero"), "pricing hero styles should be present");
+  assert.ok(styles.includes(".skeleton-card"), "premium loading skeletons should be present");
+  assert.ok(login.includes("showPasswordToggle"), "login should support a show-password control");
+  assert.equal(login.includes("Supabase Auth"), false, "login page should avoid backend-provider jargon");
+  assert.equal(users.includes("Supabase Auth user ID"), false, "users page should avoid backend-provider jargon");
+});
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }

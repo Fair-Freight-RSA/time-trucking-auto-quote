@@ -18,13 +18,14 @@
           <p class="muted">Sign in with your approved Time Trucking internal account. Safe. Reliable. On Time.</p>
         </section>
         <form class="card login-card" id="loginForm">
-          <div class="card-heading"><h2>Sign in</h2><span>Supabase Auth</span></div>
+          <div class="card-heading"><h2>Sign in</h2><span>Secure internal access</span></div>
           <label>Email
             <input name="email" type="email" autocomplete="email" required placeholder="you@timetrucking.co.za" />
           </label>
           <label>Password
-            <input name="password" type="password" autocomplete="current-password" required placeholder="Password" />
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required placeholder="Password" />
           </label>
+          <label class="checkbox"><input id="showPasswordToggle" type="checkbox" /> Show password</label>
           <button class="primary" type="submit">Sign in</button>
           <output id="loginOutput"></output>
           <p class="muted">Public RFQ and customer quote links do not require login.</p>
