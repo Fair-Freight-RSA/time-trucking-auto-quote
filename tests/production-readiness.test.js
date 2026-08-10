@@ -106,6 +106,19 @@ test("final polish keeps customer and manager UI premium and nontechnical", () =
   assert.equal(users.includes("Supabase Auth user ID"), false, "users page should avoid backend-provider jargon");
 });
 
+test("public RFQ submit button has loading, duplicate-click protection, and success feedback", () => {
+  const app = read("src/app.ts");
+
+  assert.ok(app.includes("let rfqSubmissionInFlight = false"), "RFQ submit path must track an in-flight submission");
+  assert.ok(app.includes("setSubmitLoading(\"Sending request...\")"), "valid Review submit should immediately show a loading state");
+  assert.ok(app.includes("submitButton.textContent = \"Sending request...\""), "submit button should visibly change while submitting");
+  assert.ok(app.includes("if (rfqSubmissionInFlight || submitButton.disabled) return;"), "duplicate clicks must not start another submission");
+  assert.ok(app.includes("const result = await submitPublicRfq(rawToken, payload)"), "click path must await the existing public RFQ submit call");
+  assert.ok(app.includes("Finalising route and pricing for review..."), "customer should see progress while route/pricing automation runs");
+  assert.ok(app.includes("Thanks - your quote request has been received."), "success state must render a customer-safe confirmation");
+  assert.ok(app.includes("finally {\n        if (isFinal) clearSubmitLoading();\n      }"), "button state must recover after success or failure");
+});
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }
