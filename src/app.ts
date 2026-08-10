@@ -319,7 +319,7 @@ function requestFromRecord(record: QuoteRequestRecord): QuoteRequest {
     length: item?.length_m ?? 0,
     width: item?.width_m ?? 0,
     height: item?.height_m ?? 0,
-    weight: item?.weight_kg ?? 0,
+    weight: item ? itemTotalWeightKg(item) : 0,
     stackable: record.stackable,
     loadType: record.load_type,
     loadingMethod: record.loading_method ?? "",
@@ -418,7 +418,7 @@ function calculateSuggestion(data: {
 }
 
 function calculateWizardSuggestion(items: QuoteItemRecord[], loadType: LoadServiceType, insurance: boolean): QuoteSuggestion {
-  const totalWeight = items.reduce((sum, item) => sum + (item.weight_kg ?? 0), 0);
+  const totalWeight = items.reduce((sum, item) => sum + itemTotalWeightKg(item), 0);
   const totalCube = items.reduce(
     (sum, item) => sum + (item.quantity || 1) * (item.length_m ?? 0) * (item.width_m ?? 0) * (item.height_m ?? 0),
     0
@@ -466,7 +466,7 @@ function calculateVehicleIntelligence(items: QuoteItemRecord[]): {
   recommendation: VehicleRecommendationRecord;
   flags: TransportRequirementFlagRecord[];
 } {
-  const totalWeight = items.reduce((sum, item) => sum + (item.quantity || 1) * (item.weight_kg ?? 0), 0);
+  const totalWeight = items.reduce((sum, item) => sum + itemTotalWeightKg(item), 0);
   const totalVolume = items.reduce((sum, item) => sum + (item.quantity || 1) * (item.length_m ?? 0) * (item.width_m ?? 0) * (item.height_m ?? 0), 0);
   const maxLength = Math.max(0, ...items.map((item) => item.length_m ?? 0));
   const maxWidth = Math.max(0, ...items.map((item) => item.width_m ?? 0));
@@ -1029,6 +1029,34 @@ function valueText(value: unknown, fallback = "Not supplied"): string {
   return String(value);
 }
 
+function formatKg(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+type CargoWeightLike = {
+  quantity?: unknown;
+  weight_kg?: unknown;
+  notes?: unknown;
+};
+
+function noteTotalShipmentWeight(item: CargoWeightLike): number | null {
+  const match = String(item.notes ?? "").match(/Total shipment weight:\s*([0-9]+(?:\.[0-9]+)?)\s*kg/i);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function itemTotalWeightKg(item: CargoWeightLike): number {
+  return noteTotalShipmentWeight(item) ?? (Number(item.quantity) || 1) * (Number(item.weight_kg) || 0);
+}
+
+function cargoWeightLabel(item: CargoWeightLike): string {
+  const totalWeight = noteTotalShipmentWeight(item);
+  if (totalWeight !== null) return `total ${formatKg(totalWeight)}kg`;
+  return `${formatKg(Number(item.weight_kg) || 0)}kg each`;
+}
+
 function acceptedLoadPrice(request: QuoteRequest): number | null {
   const latestDocument = request.quoteDocuments?.[0];
   return latestDocument?.final_selling_price ?? request.pricingCalculation?.recommended_selling_price ?? request.quotePrice ?? null;
@@ -1040,7 +1068,7 @@ function renderAcceptedLoadCard(request: QuoteRequest): string {
     ? `${vehicle.recommended_vehicle_type} / ${vehicle.recommended_trailer_type}`
     : `${request.suggestedVehicle} / ${request.suggestedTrailer}`;
   const load = request.items?.length
-    ? request.items.map((item) => `${item.description || item.cargo_category} (${item.quantity} x ${item.weight_kg ?? 0}kg)`).join("; ")
+    ? request.items.map((item) => `${item.description || item.cargo_category} (${item.quantity} item(s), ${cargoWeightLabel(item)})`).join("; ")
     : `${request.loadDescription || request.cargoType} (${request.quantity} x ${request.weight}kg)`;
   const acceptedAt = request.transportJob?.created_at ?? request.createdAt;
 
@@ -1239,7 +1267,7 @@ function renderCustomerQuoteDocument(document: PublicQuoteDocumentRecord): strin
       </section>
       <section class="summary-block">
         <h3>Cargo</h3>
-        ${cargoItems.length ? cargoItems.map((item) => `<p><strong>${escapeHtml(valueText(item.description, "Cargo item"))}</strong> - ${escapeHtml(valueText(item.quantity, "1"))} item(s), ${escapeHtml(valueText(item.weight_kg, "0"))}kg each</p>`).join("") : `<p class="muted">No cargo items captured.</p>`}
+        ${cargoItems.length ? cargoItems.map((item) => `<p><strong>${escapeHtml(valueText(item.description, "Cargo item"))}</strong> - ${escapeHtml(valueText(item.quantity, "1"))} item(s), ${escapeHtml(cargoWeightLabel(item))}</p>`).join("") : `<p class="muted">No cargo items captured.</p>`}
       </section>
       <section class="grid three">
         <p><strong>Vehicle</strong><span>${escapeHtml(valueText(transport.recommended_vehicle_type, "To be confirmed"))}</span></p>
@@ -2417,9 +2445,12 @@ function initClientRfq(): void {
     const dimensionNote = card.querySelector<HTMLInputElement>("[data-dimension-note]")?.value.trim() ?? "";
     const extraNote = card.querySelector<HTMLTextAreaElement>("[data-cargo-extra-note]")?.value.trim() ?? "";
     const dimensionValue = (name: string) => card.querySelector<HTMLInputElement>(`[data-dimension-field="${name}"]`)?.value.trim() ?? "";
-    const effectiveWeight = perItem ? quantity * itemWeight : totalWeight;
+    const totalShipmentWeight = perItem ? quantity * itemWeight : totalWeight;
+    const storedItemWeight = perItem ? itemWeight : (quantity > 0 ? totalWeight / quantity : totalWeight);
     const notes = [
       `Freight type: ${freightLabel(freightType)}`,
+      `Weight mode: ${perItem ? "per item" : "total shipment"}`,
+      totalShipmentWeight > 0 ? `Total shipment weight: ${formatKg(totalShipmentWeight)} kg` : "",
       dimensionNote ? `Dimensions: ${dimensionNote}` : "",
       extraNote
     ].filter(Boolean).join(" | ");
@@ -2432,7 +2463,7 @@ function initClientRfq(): void {
     set("length_m", dimensionValue("length_m"));
     set("width_m", dimensionValue("width_m"));
     set("height_m", dimensionValue("height_m"));
-    set("weight_kg", String(effectiveWeight));
+    set("weight_kg", String(storedItemWeight));
     set("notes", notes);
   };
 
@@ -2630,7 +2661,7 @@ function initClientRfq(): void {
       length_m: firstItem?.length_m ?? 0,
       width_m: firstItem?.width_m ?? 0,
       height_m: firstItem?.height_m ?? 0,
-      weight_kg: firstItem?.weight_kg ?? 0,
+      weight_kg: firstItem ? itemTotalWeightKg(firstItem) : 0,
       stackable: Boolean(firstItem?.stackable),
       load_type: loadType,
       loading_method: firstCollection?.loading_method ?? "",
@@ -2683,7 +2714,7 @@ function initClientRfq(): void {
       submitPublicRfq(rawToken, payload)
         .then(async (result) => {
           if (isFinal) {
-            void autoRouteSubmittedRfq({
+            await autoRouteSubmittedRfq({
                 quoteRequestId: result.quote_request_id,
                 responseToken: result.response_token,
                 publicReference: result.public_reference
@@ -2919,7 +2950,7 @@ async function initQuoteReview(): Promise<void> {
         <h3>Cargo items</h3>
         ${
           items.length
-            ? items.map((item) => `<p><strong>${escapeHtml(item.description ?? "Cargo item")}</strong> - ${item.quantity} item(s), ${item.length_m ?? 0}m x ${item.width_m ?? 0}m x ${item.height_m ?? 0}m, ${item.weight_kg ?? 0}kg each, ${escapeHtml((item.cargo_category ?? "general_freight").replace("_", " "))}</p>`).join("")
+            ? items.map((item) => `<p><strong>${escapeHtml(item.description ?? "Cargo item")}</strong> - ${item.quantity} item(s), ${item.length_m ?? 0}m x ${item.width_m ?? 0}m x ${item.height_m ?? 0}m, ${escapeHtml(cargoWeightLabel(item))}, ${escapeHtml((item.cargo_category ?? "general_freight").replace("_", " "))}</p>`).join("")
             : `<p>${escapeHtml(request.quantity.toString())} x ${escapeHtml(request.cargoType)} - ${request.length}m x ${request.width}m x ${request.height}m, ${request.weight}kg each</p>`
         }
       </div>
