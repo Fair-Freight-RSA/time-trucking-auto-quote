@@ -1239,7 +1239,8 @@ function renderCustomerQuoteDocument(document: PublicQuoteDocumentRecord): strin
   return `
     <article class="customer-quote">
       <header class="quote-document-header">
-        <div>
+        <div class="quote-document-brand">
+          <img class="quote-document-logo" src="./time-trucking-logo.png" alt="Time Trucking - Total Logistic Solutions" />
           <p class="eyebrow">${escapeHtml(brand.brand_name ?? "Time Trucking")}</p>
           <h1>Transport Quote</h1>
           <p class="muted">${escapeHtml(brand.brand_line ?? "Professional transport solutions")}</p>
@@ -2180,6 +2181,7 @@ function initClientRfq(): void {
       const label = field.closest("label");
       label?.querySelector(".validation-message")?.remove();
       label?.insertAdjacentHTML("beforeend", `<small class="validation-message">${escapeHtml(message)}</small>`);
+      field.scrollIntoView({ behavior: "smooth", block: "center" });
       field.focus();
     }
     return false;
@@ -2188,19 +2190,27 @@ function initClientRfq(): void {
   const namedField = (name: string): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null =>
     form.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[name="${name}"]`);
 
-  const validateStep = (step: number): boolean => {
-    clearValidation();
+  const visibleQuantityField = (card: HTMLElement): HTMLInputElement | null => {
+    const fields = Array.from(card.querySelectorAll<HTMLInputElement>("[data-cargo-quantity]"));
+    return fields.find((field) => {
+      if (field.closest("[hidden]")) return false;
+      const style = window.getComputedStyle(field);
+      return style.display !== "none" && style.visibility !== "hidden";
+    }) ?? null;
+  };
+
+  const stepValidationIssue = (step: number): { field: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null; message: string } | null => {
     const panel = panels.find((item) => Number(item.dataset.step) === step);
-    if (!panel) return true;
+    if (!panel) return null;
     if (step === 0) {
       const company = namedField("companyName");
       const contact = namedField("contactPerson");
       const email = namedField("email") as HTMLInputElement | null;
       const phone = namedField("phone");
-      if (!company?.value.trim()) return showValidation(company, "Please add your company name.");
-      if (!contact?.value.trim()) return showValidation(contact, "Please add a contact person.");
-      if (!email?.value.trim() || !email.checkValidity()) return showValidation(email, "Please enter a valid email address.");
-      if (!phone?.value.trim()) return showValidation(phone, "Please add a phone number.");
+      if (!company?.value.trim()) return { field: company, message: "Please add your company name." };
+      if (!contact?.value.trim()) return { field: contact, message: "Please add a contact person." };
+      if (!email?.value.trim() || !email.checkValidity()) return { field: email, message: "Please enter a valid email address." };
+      if (!phone?.value.trim()) return { field: phone, message: "Please add a phone number." };
     }
     if (step === 1) {
       const stops = collectStops();
@@ -2208,22 +2218,41 @@ function initClientRfq(): void {
       const deliveryCard = stopsList.querySelector<HTMLElement>('[data-primary-stop="delivery"]');
       const collectionField = collectionCard?.querySelector<HTMLInputElement>('[data-stop-field="address"]') ?? null;
       const deliveryField = deliveryCard?.querySelector<HTMLInputElement>('[data-stop-field="address"]') ?? null;
-      if (!stops.find((stop) => stop.stop_type === "collection" && stop.address)) return showValidation(collectionField, "Please add the collection address.");
-      if (!stops.find((stop) => stop.stop_type === "delivery" && stop.address)) return showValidation(deliveryField, "Please add the delivery address.");
+      if (!stops.find((stop) => stop.stop_type === "collection" && stop.address)) return { field: collectionField, message: "Please add the collection address." };
+      if (!stops.find((stop) => stop.stop_type === "delivery" && stop.address)) return { field: deliveryField, message: "Please add the delivery address." };
       const collectionDate = namedField("preferredCollectionDate");
-      if (!collectionDate?.value.trim()) return showValidation(collectionDate, "Please choose a preferred collection date.");
+      if (!collectionDate?.value.trim()) return { field: collectionDate, message: "Please choose a preferred collection date." };
     }
     if (step === 2) {
       const cargoItems = collectCargoItems();
       const cargoCard = cargoItemsList.querySelector<HTMLElement>("[data-cargo-card]");
       const descriptionField = cargoCard?.querySelector<HTMLInputElement>('[data-cargo-field="description"]') ?? null;
       const totalWeightField = cargoCard?.querySelector<HTMLInputElement>("[data-total-weight]") ?? null;
-      if (!cargoItems.length) return showValidation(null, "Please add what you are moving.");
-      if (cargoItems.some((item) => !item.description?.trim())) return showValidation(descriptionField, "Please add a cargo description.");
-      if (cargoItems.some((item) => itemTotalWeightKg(item) <= 0)) return showValidation(totalWeightField, "Total shipment weight must be more than 0 kg.");
+      const quantityField = cargoCard ? visibleQuantityField(cargoCard) : null;
+      if (!cargoItems.length) return { field: null, message: "Please add what you are moving." };
+      if (cargoItems.some((item) => !item.description?.trim())) return { field: descriptionField, message: "Please add a cargo description." };
+      if (quantityField && Number(quantityField.value) <= 0) return { field: quantityField, message: "Please add a quantity." };
+      if (cargoItems.some((item) => itemTotalWeightKg(item) <= 0)) return { field: totalWeightField, message: "Total shipment weight must be more than 0 kg." };
     }
+    return null;
+  };
+
+  const validateStep = (step: number): boolean => {
+    clearValidation();
+    const issue = stepValidationIssue(step);
+    if (issue) return showValidation(issue.field, issue.message);
     output.innerHTML = "";
     return true;
+  };
+
+  const allRequiredFieldsValid = (): boolean =>
+    panels.every((panel) => !stepValidationIssue(Number(panel.dataset.step)));
+
+  const updateSubmitButtonState = (): void => {
+    const canSubmit = currentStep === panels.length - 1 && allRequiredFieldsValid();
+    submitButton.hidden = currentStep !== panels.length - 1;
+    submitButton.disabled = !canSubmit;
+    submitButton.setAttribute("aria-disabled", String(!canSubmit));
   };
 
   const setStep = (step: number) => {
@@ -2232,8 +2261,8 @@ function initClientRfq(): void {
     stepButtons.forEach((button) => button.classList.toggle("active", Number(button.dataset.stepButton) === currentStep));
     prevStepButton.hidden = currentStep === 0;
     nextStepButton.hidden = currentStep === panels.length - 1;
-    submitButton.hidden = currentStep !== panels.length - 1;
     refreshSummary();
+    updateSubmitButtonState();
   };
 
   const stopTemplate = (index: number, type: string, title: string, removable = true) => `
@@ -2809,6 +2838,7 @@ function initClientRfq(): void {
   form.addEventListener("input", () => {
     form.querySelectorAll("[aria-invalid='true']").forEach((field) => field.removeAttribute("aria-invalid"));
     form.querySelectorAll(".validation-message").forEach((message) => message.remove());
+    updateSubmitButtonState();
   });
   form.addEventListener("change", (event) => {
     const target = event.target as HTMLElement;
@@ -2820,6 +2850,7 @@ function initClientRfq(): void {
       }
     }
     refreshSummary();
+    updateSubmitButtonState();
   });
   cargoItemsList.addEventListener("change", (event) => {
     const target = event.target as HTMLElement;
@@ -2836,9 +2867,11 @@ function initClientRfq(): void {
     }
     syncCargoCard(card);
     refreshSummary();
+    updateSubmitButtonState();
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (submitButton.disabled) return;
     const invalidStep = panels.find((panel) => !validateStep(Number(panel.dataset.step)));
     if (invalidStep) {
       setStep(Number(invalidStep.dataset.step));
@@ -2847,8 +2880,14 @@ function initClientRfq(): void {
     void submitWizard(true);
   });
   saveDraftButton.addEventListener("click", () => void submitWizard(false));
-  addStopButton.addEventListener("click", () => addStop());
-  addCargoItemButton.addEventListener("click", () => addCargoItem());
+  addStopButton.addEventListener("click", () => {
+    addStop();
+    updateSubmitButtonState();
+  });
+  addCargoItemButton.addEventListener("click", () => {
+    addCargoItem();
+    updateSubmitButtonState();
+  });
   prevStepButton.addEventListener("click", () => setStep(currentStep - 1));
   nextStepButton.addEventListener("click", () => {
     if (validateStep(currentStep)) setStep(currentStep + 1);
@@ -2878,6 +2917,7 @@ function initClientRfq(): void {
     if (target.matches("[data-remove-stop]")) {
       target.closest("[data-stop-card]")?.remove();
       refreshSummary();
+      updateSubmitButtonState();
     }
   });
   stopsList.addEventListener("change", (event) => {
@@ -2907,6 +2947,7 @@ function initClientRfq(): void {
     if (!card) return;
     syncStopDerivedFields(card);
     refreshSummary();
+    updateSubmitButtonState();
   });
   cargoItemsList.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
@@ -2914,6 +2955,7 @@ function initClientRfq(): void {
       target.closest("[data-cargo-card]")?.remove();
       refreshDynamicQuestions();
       refreshSummary();
+      updateSubmitButtonState();
     }
   });
 

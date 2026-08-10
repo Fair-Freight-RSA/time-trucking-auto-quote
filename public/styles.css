@@ -855,6 +855,20 @@ output {
   padding-bottom: 16px;
 }
 
+.quote-document-brand {
+  display: grid;
+  gap: 8px;
+}
+
+.quote-document-logo {
+  display: block;
+  width: min(156px, 100%);
+  height: auto;
+  max-height: 96px;
+  object-fit: contain;
+  object-position: left center;
+}
+
 .quote-number {
   display: grid;
   gap: 4px;
@@ -1022,64 +1036,25 @@ a {
 
 .brand-shell {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 20px;
 }
 
-.brand-logo {
-  width: 132px;
-  aspect-ratio: 1.92 / 1;
-  display: grid;
-  grid-template-rows: 1fr auto;
-  align-items: center;
-  justify-items: center;
-  flex: 0 0 auto;
-  border: 4px solid var(--tt-blue);
-  border-radius: 4px;
-  background: #ffffff;
-  color: var(--tt-blue);
-  box-shadow: var(--shadow-soft);
-  overflow: hidden;
-}
-
-.brand-logo span {
+.brand-logo-img {
   display: block;
-  width: 100%;
-  color: var(--tt-blue);
-  font-weight: 950;
-  letter-spacing: 0;
-  line-height: 0.86;
-  text-align: center;
-  white-space: nowrap;
-}
-
-.brand-logo span:first-child {
-  font-size: 36px;
-  padding-top: 5px;
-}
-
-.brand-logo span:last-child {
-  background: var(--tt-blue);
-  color: #ffffff;
-  font-size: 19px;
-  line-height: 1.05;
-  padding: 4px 3px 5px;
+  width: min(168px, 100%);
+  height: auto;
+  max-height: 104px;
+  object-fit: contain;
+  object-position: left center;
+  flex: 0 0 auto;
+  box-shadow: var(--shadow-soft);
 }
 
 .brand-copy {
   display: grid;
   gap: 3px;
   min-width: 0;
-}
-
-.brand-title {
-  color: inherit;
-  font-size: 17px;
-  font-weight: 950;
-  letter-spacing: 0.02em;
-  line-height: 1.15;
-  text-transform: uppercase;
-  overflow-wrap: anywhere;
 }
 
 .brand-subtitle {
@@ -1089,20 +1064,10 @@ a {
   line-height: 1.25;
 }
 
-.header .brand-logo {
-  border-color: #ffffff;
+.header .brand-logo-img {
+  width: 174px;
+  max-height: 108px;
   box-shadow: 0 14px 26px rgba(0, 0, 0, 0.18);
-  width: 156px;
-}
-
-.header .brand-logo span:first-child {
-  font-size: 42px;
-  padding-top: 6px;
-}
-
-.header .brand-logo span:last-child {
-  font-size: 22px;
-  padding: 4px 3px 6px;
 }
 
 .header .brand-subtitle {
@@ -1368,6 +1333,29 @@ button:hover,
   border-color: var(--tt-blue-dark);
 }
 
+button:disabled,
+button[aria-disabled="true"],
+.primary:disabled,
+.primary[aria-disabled="true"] {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+  color: #6b7280;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+button:disabled:hover,
+button[aria-disabled="true"]:hover,
+.primary:disabled:hover,
+.primary[aria-disabled="true"]:hover {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+  color: #6b7280;
+  box-shadow: none;
+  transform: none;
+}
+
 .wizard-steps button.active {
   background: var(--accent-soft);
   border-color: var(--tt-blue);
@@ -1496,24 +1484,10 @@ tr:last-child td {
   min-width: 0;
 }
 
-.public-header .brand-logo {
-  width: 116px;
-  border-width: 3px;
-}
-
-.public-header .brand-logo span:first-child {
-  font-size: 31px;
-  padding-top: 4px;
-}
-
-.public-header .brand-logo span:last-child {
-  font-size: 16px;
-  padding: 3px 3px 4px;
-}
-
-.public-header .brand-title {
-  color: var(--ink);
-  font-size: 16px;
+.public-header .brand-logo-img {
+  width: 146px;
+  max-height: 92px;
+  box-shadow: 0 10px 22px rgba(0, 21, 143, 0.16);
 }
 
 .public-header .brand-subtitle {
@@ -1636,18 +1610,9 @@ output strong,
     box-shadow: 0 12px 28px rgba(0, 21, 143, 0.16);
   }
 
-  .header .brand-logo {
-    width: 112px;
-  }
-
-  .header .brand-logo span:first-child {
-    font-size: 30px;
-    padding-top: 4px;
-  }
-
-  .header .brand-logo span:last-child {
-    font-size: 16px;
-    padding: 3px 3px 4px;
+  .header .brand-logo-img {
+    width: 128px;
+    max-height: 80px;
   }
 
   .header::after {
@@ -1682,19 +1647,14 @@ output strong,
     padding-top: 3px;
   }
 
-  .brand-logo {
-    width: 112px;
-    border-width: 3px;
+  .brand-logo-img {
+    width: 128px;
+    max-height: 80px;
   }
 
-  .brand-logo span:first-child {
-    font-size: 30px;
-    padding-top: 4px;
-  }
-
-  .brand-logo span:last-child {
-    font-size: 16px;
-    padding: 3px 3px 4px;
+  .public-header .brand-logo-img {
+    width: 128px;
+    max-height: 80px;
   }
 
   .manager-stat-grid,
@@ -1726,10 +1686,6 @@ output strong,
 
   .public-header .brand-copy {
     padding-top: 0;
-  }
-
-  .public-header .brand-title {
-    font-size: 15px;
   }
 }
 
