@@ -203,12 +203,16 @@ test("TEST F and G: customer validation blocks missing pallet dimensions and ins
 
 test("standard equipment engine migration is additive and exposes override pricing hooks", () => {
   const migration = read("supabase/migrations/20260810002000_standard_equipment_engine.sql");
+  const overrideFix = read("supabase/migrations/20260810003000_fix_equipment_override_reset_and_utilization.sql");
   assert.ok(migration.includes("create table if not exists public.standard_equipment_profiles"), "standard equipment profiles table should be additive");
   assert.ok(migration.includes("system_equipment_profile_id"), "system equipment selection must be retained");
   assert.ok(migration.includes("final_equipment_profile_id"), "final/overridden equipment selection must be retained");
   assert.ok(migration.includes("equipment_alternatives"), "alternatives should be captured for manager review");
   assert.ok(migration.includes("estimated_deck_utilization_percent"), "deck utilisation should be captured");
   assert.ok(migration.includes("create or replace function public.ttaq_apply_equipment_override"), "Henning override RPC must exist");
+  assert.ok(overrideFix.includes("equipment_override_history"), "override/reset history must be preserved");
+  assert.ok(overrideFix.includes("system_number_of_trucks"), "system unit count must be retained for reset");
+  assert.ok(overrideFix.includes("estimated_payload_utilization_percent = coalesce(payload_util, 0)"), "override must recalculate payload utilisation");
   assert.ok(migration.includes("vehicle_dependent_costs_multiplier"), "pricing output must expose unit-count multiplier");
   assert.ok(migration.includes("equipment_price_generated"), "pricing audit event should record equipment pricing");
   assert.equal(migration.includes("or total_weight > 30000"), false, "mass-only abnormal rule must not return");

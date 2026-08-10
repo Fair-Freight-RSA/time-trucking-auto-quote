@@ -225,6 +225,11 @@ export interface VehicleRecommendationRecord {
   overridden_by?: string | null;
   overridden_at?: string | null;
   reset_to_system_at?: string | null;
+  system_number_of_trucks?: number | null;
+  system_payload_utilization_percent?: number | null;
+  system_volume_utilization_percent?: number | null;
+  system_deck_utilization_percent?: number | null;
+  equipment_override_history?: EquipmentOverrideHistoryEntry[] | null;
 }
 
 export interface EquipmentAlternativeRecord {
@@ -264,6 +269,18 @@ export interface StandardEquipmentProfileRecord {
   is_active: boolean;
   notes: string | null;
   source_note: string | null;
+}
+
+export interface EquipmentOverrideHistoryEntry {
+  action?: string;
+  from_equipment?: string;
+  to_equipment?: string;
+  from_units?: number;
+  to_units?: number;
+  equipment_source?: EquipmentSource;
+  reason?: string;
+  user_id?: string;
+  timestamp?: string;
 }
 
 export interface TransportRequirementFlagRecord {

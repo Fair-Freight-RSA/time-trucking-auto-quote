@@ -589,6 +589,9 @@ function renderVehicleIntelligenceCard(request: QuoteRequest): string {
   const alternatives = Array.isArray(recommendation.equipment_alternatives)
     ? recommendation.equipment_alternatives
     : [];
+  const overrideHistory = Array.isArray(recommendation.equipment_override_history)
+    ? recommendation.equipment_override_history.slice(-3).reverse()
+    : [];
   return `
     <section class="vehicle-intelligence-card">
       <div class="card-heading">
@@ -613,6 +616,11 @@ function renderVehicleIntelligenceCard(request: QuoteRequest): string {
       ${
         alternatives.length
           ? `<div class="summary-block"><h3>Alternatives</h3><div class="equipment-alt-list">${alternatives.map((profile) => `<span>${escapeHtml(profile.display_name)} - ${escapeHtml(profile.trailer_body)} - ${profile.units} unit(s)</span>`).join("")}</div></div>`
+          : ""
+      }
+      ${
+        overrideHistory.length
+          ? `<div class="summary-block"><h3>Override history</h3><div class="equipment-alt-list">${overrideHistory.map((entry) => `<span>${escapeHtml(equipmentHistoryLabel(entry))}</span>`).join("")}</div></div>`
           : ""
       }
       <div class="flag-row">
@@ -666,6 +674,24 @@ function equipmentSourceLabel(source: string | null | undefined): string {
 function formatPercent(value: number | null | undefined): string {
   if (!Number.isFinite(Number(value))) return "0%";
   return `${Number(value).toFixed(2).replace(/\.00$/, "")}%`;
+}
+
+function equipmentHistoryLabel(entry: {
+  action?: unknown;
+  to_equipment?: unknown;
+  from_units?: unknown;
+  to_units?: unknown;
+  reason?: unknown;
+  timestamp?: unknown;
+}): string {
+  const action = String(entry.action ?? "override").replaceAll("_", " ");
+  const toEquipment = String(entry.to_equipment ?? "system recommendation");
+  const fromUnits = Number(entry.from_units ?? 0);
+  const toUnits = Number(entry.to_units ?? 0);
+  const unitText = fromUnits || toUnits ? ` (${fromUnits || "?"} -> ${toUnits || "?"} unit(s))` : "";
+  const reason = String(entry.reason ?? "No reason captured");
+  const timestamp = entry.timestamp ? ` - ${formatDateTime(String(entry.timestamp))}` : "";
+  return `${action}: ${toEquipment}${unitText}. ${reason}${timestamp}`;
 }
 
 async function hydrateEquipmentOverrideControls(request: QuoteRequest, canEdit: boolean, output: HTMLElement): Promise<void> {
