@@ -655,6 +655,15 @@ output {
   margin-bottom: 10px;
 }
 
+label small {
+  display: block;
+  margin: 4px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
 .compact-cargo-card {
   gap: 14px;
 }
@@ -703,6 +712,46 @@ output {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.pricing-source-guide {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.pricing-source-guide strong,
+.pricing-source-guide dt {
+  color: var(--tt-blue);
+  font-weight: 850;
+}
+
+.pricing-source-guide span,
+.pricing-source-guide dd {
+  color: var(--muted);
+}
+
+.pricing-source-guide dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.pricing-source-guide dl div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.pricing-source-guide dt,
+.pricing-source-guide dd {
+  margin: 0;
 }
 
 .rfq-microcopy {
@@ -1675,7 +1724,8 @@ output strong,
 
 @media (max-width: 440px) {
   .freight-choice-group,
-  .quick-toggle-grid {
+  .quick-toggle-grid,
+  .pricing-source-guide dl {
     grid-template-columns: 1fr;
   }
 

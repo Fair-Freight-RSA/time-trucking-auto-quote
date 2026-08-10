@@ -468,15 +468,20 @@ function calculateVehicleIntelligence(items: QuoteItemRecord[]): {
 } {
   const totalWeight = items.reduce((sum, item) => sum + itemTotalWeightKg(item), 0);
   const totalVolume = items.reduce((sum, item) => sum + (item.quantity || 1) * (item.length_m ?? 0) * (item.width_m ?? 0) * (item.height_m ?? 0), 0);
+  const totalDeckArea = items.reduce((sum, item) => sum + (item.quantity || 1) * (item.length_m ?? 0) * (item.width_m ?? 0), 0);
   const maxLength = Math.max(0, ...items.map((item) => item.length_m ?? 0));
   const maxWidth = Math.max(0, ...items.map((item) => item.width_m ?? 0));
   const maxHeight = Math.max(0, ...items.map((item) => item.height_m ?? 0));
   const totalValue = items.reduce((sum, item) => sum + (item.cargo_value ?? 0), 0);
+  const itemCount = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
   const hazmat = items.some((item) => item.dangerous_goods || item.cargo_category === "dangerous_goods");
   const refrigerated = items.some((item) => item.temperature_controlled || item.cargo_category === "refrigerated");
   const machinery = items.some((item) => item.cargo_category === "machinery");
   const fragile = items.some((item) => item.fragile);
-  const abnormal = maxLength > 12 || maxWidth > 2.5 || maxHeight > 4.3 || totalWeight > 30000;
+  const missingRequiredDimensions = items.some((item) =>
+    item.cargo_category === "machinery" && (!(item.length_m ?? 0) || !(item.width_m ?? 0) || !(item.height_m ?? 0))
+  );
+  const dimensionallyAbnormal = maxLength > 12 || maxWidth > 2.5 || maxHeight > 4.3;
   const crane = machinery && totalWeight > 8000;
   const forklift = !machinery && totalWeight > 1000;
 
@@ -495,12 +500,12 @@ function calculateVehicleIntelligence(items: QuoteItemRecord[]): {
     trailer = "Hazmat-compatible trailer";
     payloadCapacity = 28000;
     volumeCapacity = 85;
-  } else if (abnormal || (machinery && (totalWeight > 28000 || maxLength > 12))) {
+  } else if (dimensionallyAbnormal || (machinery && (totalWeight > 28000 || maxLength > 12))) {
     vehicle = "Heavy haulage truck";
     trailer = "Lowbed";
     payloadCapacity = 35000;
     volumeCapacity = 70;
-  } else if (machinery || totalWeight > 14000) {
+  } else if (machinery || totalWeight > 14000 || itemCount > 14 || totalDeckArea > 18) {
     vehicle = "Rigid truck / horse";
     trailer = "Flatdeck / tri-axle";
     payloadCapacity = 28000;
@@ -513,7 +518,7 @@ function calculateVehicleIntelligence(items: QuoteItemRecord[]): {
   }
 
   const trucks = Math.max(1, Math.ceil(Math.max(totalWeight / payloadCapacity, totalVolume / volumeCapacity)));
-  const managerReview = abnormal || hazmat || refrigerated || crane || totalValue >= 500000 || fragile;
+  const managerReview = dimensionallyAbnormal || missingRequiredDimensions || hazmat || refrigerated || crane || totalValue >= 500000 || fragile;
   const makeFlag = (key: string, label: string, severity: string, notes: string): TransportRequirementFlagRecord => ({
     id: key,
     quote_request_id: "",
@@ -524,8 +529,9 @@ function calculateVehicleIntelligence(items: QuoteItemRecord[]): {
     flag_notes: notes
   });
   const flags = [
-    abnormal ? makeFlag("abnormal_load", "Abnormal load", "warning", "Dimensions or weight may exceed normal limits.") : null,
-    abnormal ? makeFlag("permit_required", "Permit required", "warning", "Permit review recommended.") : null,
+    missingRequiredDimensions ? makeFlag("dimensions_required", "Dimensions required", "warning", "Length, width, and height are required before abnormal-load review.") : null,
+    dimensionallyAbnormal ? makeFlag("abnormal_load", "Abnormal load", "warning", "Dimensions may exceed normal transport limits.") : null,
+    dimensionallyAbnormal ? makeFlag("permit_required", "Permit required", "warning", "Permit review recommended for abnormal dimensions.") : null,
     maxWidth > 3.5 || maxLength > 22 ? makeFlag("escort_recommended", "Escort recommended", "warning", "Escort vehicle may be required.") : null,
     hazmat ? makeFlag("hazmat_required", "Hazmat required", "critical", "Dangerous goods handling required.") : null,
     refrigerated ? makeFlag("refrigeration_required", "Refrigeration required", "warning", "Temperature-controlled equipment required.") : null,
@@ -543,15 +549,22 @@ function calculateVehicleIntelligence(items: QuoteItemRecord[]): {
       number_of_trucks: trucks,
       estimated_payload_utilization_percent: Math.min(100, Math.round((totalWeight / (payloadCapacity * trucks)) * 100)),
       estimated_volume_utilization_percent: Math.min(100, Math.round((totalVolume / (volumeCapacity * trucks)) * 100)),
-      abnormal_load: abnormal,
-      permit_required: abnormal,
+      abnormal_load: dimensionallyAbnormal,
+      permit_required: dimensionallyAbnormal,
       escort_recommended: maxWidth > 3.5 || maxLength > 22,
       hazmat_required: hazmat,
       refrigeration_required: refrigerated,
       crane_required: crane,
       forklift_required: forklift,
       manager_review_required: managerReview,
-      recommendation_notes: `Total weight ${totalWeight} kg. Total volume ${totalVolume.toFixed(2)} m3. Max item ${maxLength}m x ${maxWidth}m x ${maxHeight}m.`,
+      recommendation_notes: [
+        `${itemCount} item(s), total weight ${formatKg(totalWeight)} kg.`,
+        `Deck footprint ${totalDeckArea.toFixed(2)} m2 and cube ${totalVolume.toFixed(2)} m3.`,
+        `Largest item ${maxLength}m x ${maxWidth}m x ${maxHeight}m.`,
+        dimensionallyAbnormal ? "Abnormal dimension review required." : "No abnormal dimensions detected by the current configured rule.",
+        missingRequiredDimensions ? "Dimensions are missing and manager review is required before relying on this recommendation." : "",
+        `${trucks} truck(s) based on payload and cube capacity.`
+      ].filter(Boolean).join(" "),
       override_vehicle_type: null,
       override_trailer_type: null,
       override_reason: null
@@ -2199,6 +2212,20 @@ function initClientRfq(): void {
     }) ?? null;
   };
 
+  const positiveInputValue = (field: HTMLInputElement | null | undefined): boolean => {
+    const value = Number(field?.value ?? 0);
+    return Number.isFinite(value) && value > 0;
+  };
+
+  const dimensionInput = (card: HTMLElement, name: "length_m" | "width_m" | "height_m"): HTMLInputElement | null =>
+    card.querySelector<HTMLInputElement>(`[data-dimension-field="${name}"]`);
+
+  const dimensionLabel = (name: "length_m" | "width_m" | "height_m"): string => ({
+    length_m: "length",
+    width_m: "width",
+    height_m: "height"
+  }[name]);
+
   const stepValidationIssue = (step: number): { field: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null; message: string } | null => {
     const panel = panels.find((item) => Number(item.dataset.step) === step);
     if (!panel) return null;
@@ -2233,6 +2260,32 @@ function initClientRfq(): void {
       if (cargoItems.some((item) => !item.description?.trim())) return { field: descriptionField, message: "Please add a cargo description." };
       if (quantityField && Number(quantityField.value) <= 0) return { field: quantityField, message: "Please add a quantity." };
       if (cargoItems.some((item) => itemTotalWeightKg(item) <= 0)) return { field: totalWeightField, message: "Total shipment weight must be more than 0 kg." };
+      if (cargoCard && selectedFreightType(cargoCard) === "pallets") {
+        for (const name of ["length_m", "width_m", "height_m"] as const) {
+          const field = dimensionInput(cargoCard, name);
+          if (!positiveInputValue(field)) return { field, message: `Please add the pallet ${dimensionLabel(name)} in millimetres.` };
+        }
+      }
+      if (cargoCard && selectedFreightType(cargoCard) === "abnormal") {
+        for (const name of ["length_m", "width_m", "height_m"] as const) {
+          const field = dimensionInput(cargoCard, name);
+          if (!positiveInputValue(field)) return { field, message: `Please add the load ${dimensionLabel(name)} in millimetres.` };
+        }
+        const abnormalWeightField = cargoCard.querySelector<HTMLInputElement>("[data-abnormal-weight]");
+        if (!positiveInputValue(abnormalWeightField)) return { field: abnormalWeightField, message: "Please add the abnormal-load weight in kg." };
+      }
+      const insuranceField = namedField("insurance");
+      const cargoValueField = namedField("cargoValue") as HTMLInputElement | null;
+      if (insuranceField?.value === "yes" && !positiveInputValue(cargoValueField)) {
+        return { field: cargoValueField, message: "Please add the cargo value when insurance is required." };
+      }
+      const notesField = namedField("specialRequirements");
+      if (namedField("dangerousGoods") instanceof HTMLInputElement && (namedField("dangerousGoods") as HTMLInputElement).checked && !notesField?.value.trim()) {
+        return { field: notesField, message: "Please add dangerous-goods details in the notes." };
+      }
+      if (namedField("temperatureControlled") instanceof HTMLInputElement && (namedField("temperatureControlled") as HTMLInputElement).checked && !notesField?.value.trim()) {
+        return { field: notesField, message: "Please add the required temperature range or details in the notes." };
+      }
     }
     return null;
   };
@@ -2412,9 +2465,11 @@ function initClientRfq(): void {
       target.innerHTML = `
         <details class="optional-section" open>
           <summary>Pallet details</summary>
-          <div class="grid two">
+          <div class="grid three">
             <label>Number of pallets<input data-cargo-quantity type="number" min="1" value="1" /></label>
-            <label>Pallet dimensions optional<input data-dimension-note placeholder="e.g. 1.2m x 1m x 1.5m" /></label>
+            <label>Pallet length (mm)<input data-dimension-field="length_m" data-dimension-unit="mm" type="number" min="1" step="1" required placeholder="1200" /></label>
+            <label>Pallet width (mm)<input data-dimension-field="width_m" data-dimension-unit="mm" type="number" min="1" step="1" required placeholder="1000" /></label>
+            <label>Pallet height (mm)<input data-dimension-field="height_m" data-dimension-unit="mm" type="number" min="1" step="1" required placeholder="1500" /></label>
           </div>
         </details>
       `;
@@ -2443,9 +2498,10 @@ function initClientRfq(): void {
         <details class="optional-section" open>
           <summary>Abnormal-load detail</summary>
           <div class="grid three">
-            <label>Length m<input data-dimension-field="length_m" type="number" min="0" step="0.01" /></label>
-            <label>Width m<input data-dimension-field="width_m" type="number" min="0" step="0.01" /></label>
-            <label>Height m<input data-dimension-field="height_m" type="number" min="0" step="0.01" /></label>
+            <label>Length (mm)<input data-dimension-field="length_m" data-dimension-unit="mm" type="number" min="1" step="1" required /></label>
+            <label>Width (mm)<input data-dimension-field="width_m" data-dimension-unit="mm" type="number" min="1" step="1" required /></label>
+            <label>Height (mm)<input data-dimension-field="height_m" data-dimension-unit="mm" type="number" min="1" step="1" required /></label>
+            <label>Weight (kg)<input data-abnormal-weight type="number" min="0" step="0.01" /></label>
           </div>
           <label>Abnormal-load detail<textarea data-cargo-extra-note placeholder="Permits, escorts, over-height/over-width notes, or lifting constraints."></textarea></label>
         </details>
@@ -2469,14 +2525,32 @@ function initClientRfq(): void {
     const freightType = selectedFreightType(card);
     const dimensionNote = card.querySelector<HTMLInputElement>("[data-dimension-note]")?.value.trim() ?? "";
     const extraNote = card.querySelector<HTMLTextAreaElement>("[data-cargo-extra-note]")?.value.trim() ?? "";
-    const dimensionValue = (name: string) => card.querySelector<HTMLInputElement>(`[data-dimension-field="${name}"]`)?.value.trim() ?? "";
+    const dimensionValue = (name: string) => {
+      const input = card.querySelector<HTMLInputElement>(`[data-dimension-field="${name}"]`);
+      if (!input) return "";
+      const value = Number(input.value);
+      if (!Number.isFinite(value) || value <= 0) return "";
+      return input.dataset.dimensionUnit === "mm" ? String(value / 1000) : String(value);
+    };
+    const dimensionNoteFromFields = () => {
+      const values = (["length_m", "width_m", "height_m"] as const).map((name) => {
+        const input = card.querySelector<HTMLInputElement>(`[data-dimension-field="${name}"]`);
+        const value = Number(input?.value ?? 0);
+        return Number.isFinite(value) && value > 0 ? value : 0;
+      });
+      return values.every((value) => value > 0) ? `${values[0]}mm x ${values[1]}mm x ${values[2]}mm` : "";
+    };
+    const abnormalWeight = Number(card.querySelector<HTMLInputElement>("[data-abnormal-weight]")?.value ?? 0) || 0;
     const totalShipmentWeight = perItem ? quantity * itemWeight : totalWeight;
-    const storedItemWeight = perItem ? itemWeight : (quantity > 0 ? totalWeight / quantity : totalWeight);
+    const storedItemWeight = freightType === "abnormal" && abnormalWeight > 0
+      ? abnormalWeight
+      : perItem ? itemWeight : (quantity > 0 ? totalWeight / quantity : totalWeight);
     const notes = [
       `Freight type: ${freightLabel(freightType)}`,
       `Weight mode: ${perItem ? "per item" : "total shipment"}`,
       totalShipmentWeight > 0 ? `Total shipment weight: ${formatKg(totalShipmentWeight)} kg` : "",
-      dimensionNote ? `Dimensions: ${dimensionNote}` : "",
+      dimensionNoteFromFields() ? `Dimensions: ${dimensionNoteFromFields()}` : dimensionNote ? `Dimensions: ${dimensionNote}` : "",
+      abnormalWeight > 0 ? `Abnormal item weight: ${formatKg(abnormalWeight)} kg` : "",
       extraNote
     ].filter(Boolean).join(" | ");
     const set = (name: string, value: string) => {

@@ -25,17 +25,29 @@
         <section class="hero">
           <p class="eyebrow">Configurable pricing</p>
           <h1>Pricing settings</h1>
-          <p class="muted">Set company pricing inputs used by the traceable quote calculation engine.</p>
+          <p class="muted">Maintain the owner-controlled inputs that feed quote rates: diesel, operating cost profile, route rules, margin, VAT, and surcharges.</p>
         </section>
         <form class="card" id="pricingSettingsForm">
-          <div class="card-heading"><h2>Company settings</h2><span>No hard-coded prices</span></div>
+          <section class="pricing-source-guide" aria-label="Pricing source guide">
+            <div>
+              <strong>Where quote rates come from</strong>
+              <span>Values on this page are saved as the active pricing profile. Route distance and duration come from Google route intelligence when available; owners can update operational inputs here without changing code.</span>
+            </div>
+            <dl>
+              <div><dt>Fuel</dt><dd>Current diesel, baseline, provider, refresh timestamp, and manual override status.</dd></div>
+              <div><dt>Operating costs</dt><dd>Fuel consumption, tyres, maintenance, insurance, depreciation, vehicle overhead, driver cost, and overnight allowance.</dd></div>
+              <div><dt>Commercial rules</dt><dd>Admin overhead, margin profile, minimum profit, discount guardrail, VAT, quote validity, seasonal multiplier, toll fallback, and route-risk surcharge.</dd></div>
+              <div><dt>Special handling</dt><dd>Permit, escort, hazmat, refrigeration, crane, forklift, and high-value surcharges.</dd></div>
+            </dl>
+          </section>
+          <div class="card-heading"><h2>Fuel and operating cost profile</h2><span>Current value, unit, source, and status</span></div>
           <div class="grid three">
-            <label>Current diesel price / litre<input name="fuel_price_per_litre" type="number" min="0" step="0.0001" /></label>
-            <label>Previous diesel price / litre<input name="diesel_previous_price_per_litre" type="number" min="0" step="0.0001" /></label>
-            <label>Diesel baseline / litre<input name="diesel_base_price_per_litre" type="number" min="0" step="0.0001" value="24" /></label>
-            <label>Effective date<input name="diesel_effective_from" type="date" /></label>
-            <label>Provider ID<input name="diesel_provider_id" placeholder="manual / provider key" /></label>
-            <label>Last refresh timestamp<input name="diesel_refreshed_at" type="datetime-local" /></label>
+            <label>Current diesel price (ZAR/litre)<small>Source: provider or manual override</small><input name="fuel_price_per_litre" type="number" min="0" step="0.0001" /></label>
+            <label>Previous diesel price (ZAR/litre)<small>Source: last saved profile</small><input name="diesel_previous_price_per_litre" type="number" min="0" step="0.0001" /></label>
+            <label>Diesel baseline (ZAR/litre)<small>Used for surcharge comparison</small><input name="diesel_base_price_per_litre" type="number" min="0" step="0.0001" value="24" /></label>
+            <label>Effective date<small>When the diesel input applies</small><input name="diesel_effective_from" type="date" /></label>
+            <label>Provider ID<small>Manual/provider key shown in audit</small><input name="diesel_provider_id" placeholder="manual / provider key" /></label>
+            <label>Last refresh timestamp<small>Shows when the fuel input was updated</small><input name="diesel_refreshed_at" type="datetime-local" /></label>
             <label>Calculated surcharge %<input name="diesel_surcharge_percent" type="number" min="0" step="0.0001" readonly placeholder="Calculated server-side" /></label>
             <label>Diesel admin override / litre<input name="diesel_admin_override_price_per_litre" type="number" min="0" step="0.0001" placeholder="Manual fallback price" /></label>
             <label>Manual override enabled
@@ -51,30 +63,30 @@
               </select>
             </label>
             <label>Vehicle cost profile<input name="vehicle_cost_profile_key" value="default" placeholder="default / 8 ton / lowbed" /></label>
-            <label>Fuel consumption L/100km<input name="fuel_consumption_l_per_100km" type="number" min="0" step="0.0001" /></label>
-            <label>Average tyre cost/km<input name="average_tyre_cost_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Maintenance cost/km<input name="maintenance_cost_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Insurance cost/km<input name="insurance_cost_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Depreciation cost/km<input name="depreciation_cost_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Vehicle overhead/km<input name="vehicle_overhead_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Driver hourly wage<input name="driver_hourly_wage" type="number" min="0" step="0.0001" /></label>
-            <label>Driver overnight allowance<input name="driver_overnight_allowance" type="number" min="0" step="0.01" /></label>
-            <label>Admin overhead %<input name="admin_overhead_percent" type="number" min="0" step="0.0001" /></label>
-            <label>Profit margin %<input name="profit_margin_percent" type="number" min="0" step="0.0001" /></label>
-            <label>VAT %<input name="vat_percent" type="number" min="0" step="0.0001" /></label>
-            <label>Minimum profit<input name="minimum_profit" type="number" min="0" step="0.01" /></label>
-            <label>Maximum discount %<input name="maximum_discount_percent" type="number" min="0" step="0.0001" /></label>
+            <label>Fuel consumption (L/100km)<small>Vehicle operating input</small><input name="fuel_consumption_l_per_100km" type="number" min="0" step="0.0001" /></label>
+            <label>Average tyre cost (ZAR/km)<small>Vehicle operating input</small><input name="average_tyre_cost_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Maintenance cost (ZAR/km)<small>Vehicle operating input</small><input name="maintenance_cost_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Insurance cost (ZAR/km)<small>Vehicle operating input</small><input name="insurance_cost_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Depreciation cost (ZAR/km)<small>Vehicle operating input</small><input name="depreciation_cost_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Vehicle overhead (ZAR/km)<small>Vehicle operating input</small><input name="vehicle_overhead_per_km" type="number" min="0" step="0.0001" /></label>
+            <label>Driver hourly wage (ZAR/hour)<small>Time-based driver input</small><input name="driver_hourly_wage" type="number" min="0" step="0.0001" /></label>
+            <label>Driver overnight allowance (ZAR)<small>Trip allowance input</small><input name="driver_overnight_allowance" type="number" min="0" step="0.01" /></label>
+            <label>Admin overhead %<small>Company overhead input</small><input name="admin_overhead_percent" type="number" min="0" step="0.0001" /></label>
+            <label>Profit margin %<small>Default commercial margin</small><input name="profit_margin_percent" type="number" min="0" step="0.0001" /></label>
+            <label>VAT %<small>Tax applied to customer quote</small><input name="vat_percent" type="number" min="0" step="0.0001" /></label>
+            <label>Minimum profit (ZAR)<small>Profit floor</small><input name="minimum_profit" type="number" min="0" step="0.01" /></label>
+            <label>Maximum discount %<small>Owner discount guardrail</small><input name="maximum_discount_percent" type="number" min="0" step="0.0001" /></label>
             <label>Currency<input name="currency" value="ZAR" /></label>
             <label>Quote validity days<input name="quote_validity_days" type="number" min="1" value="7" /></label>
           </div>
           <div class="card-heading"><h2>Dynamic pricing controls</h2><span>Season, route risk, tolls, and margin profile</span></div>
           <div class="grid three">
-            <label>Low season multiplier<input name="seasonal_low_multiplier" type="number" min="0" step="0.0001" value="0.95" /></label>
-            <label>Normal season multiplier<input name="seasonal_normal_multiplier" type="number" min="0" step="0.0001" value="1" /></label>
-            <label>Busy season multiplier<input name="seasonal_busy_multiplier" type="number" min="0" step="0.0001" value="1.10" /></label>
-            <label>Peak season multiplier<input name="seasonal_peak_multiplier" type="number" min="0" step="0.0001" value="1.20" /></label>
-            <label>Default toll cost<input name="default_toll_cost" type="number" min="0" step="0.01" value="0" /></label>
-            <label>Default route risk surcharge<input name="default_route_risk_surcharge" type="number" min="0" step="0.01" value="0" /></label>
+            <label>Low season multiplier<small>Seasonal adjustment</small><input name="seasonal_low_multiplier" type="number" min="0" step="0.0001" value="0.95" /></label>
+            <label>Normal season multiplier<small>Seasonal adjustment</small><input name="seasonal_normal_multiplier" type="number" min="0" step="0.0001" value="1" /></label>
+            <label>Busy season multiplier<small>Seasonal adjustment</small><input name="seasonal_busy_multiplier" type="number" min="0" step="0.0001" value="1.10" /></label>
+            <label>Peak season multiplier<small>Seasonal adjustment</small><input name="seasonal_peak_multiplier" type="number" min="0" step="0.0001" value="1.20" /></label>
+            <label>Default toll cost (ZAR)<small>Fallback when route toll data is unavailable</small><input name="default_toll_cost" type="number" min="0" step="0.01" value="0" /></label>
+            <label>Default route risk surcharge (ZAR)<small>Fallback route-risk adjustment</small><input name="default_route_risk_surcharge" type="number" min="0" step="0.01" value="0" /></label>
             <label>Margin profile
               <select name="margin_profile_key">
                 <option value="minimum">Minimum</option>
