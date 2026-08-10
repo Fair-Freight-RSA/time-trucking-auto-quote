@@ -2487,10 +2487,13 @@ function initClientRfq(): void {
 
   if (!stopsList || !cargoItemsList || !dynamicQuestionsList || !reviewSummary || !addStopButton || !addCargoItemButton || !prevStepButton || !nextStepButton || !saveDraftButton || !submitButton) return;
 
+  form.noValidate = true;
+
   let currentStep = 0;
   let stopCounter = 0;
   let cargoCounter = 0;
   let rfqSubmissionInFlight = false;
+  let rfqSubmissionComplete = false;
   const submitButtonDefaultText = submitButton.textContent?.trim() || "REQUEST QUOTE";
 
   const clearValidation = (): void => {
@@ -2615,8 +2618,8 @@ function initClientRfq(): void {
   const updateSubmitButtonState = (): void => {
     const canSubmit = currentStep === panels.length - 1 && allRequiredFieldsValid();
     submitButton.hidden = currentStep !== panels.length - 1;
-    submitButton.disabled = !canSubmit || rfqSubmissionInFlight;
-    submitButton.setAttribute("aria-disabled", String(!canSubmit || rfqSubmissionInFlight));
+    submitButton.disabled = !canSubmit || rfqSubmissionInFlight || rfqSubmissionComplete;
+    submitButton.setAttribute("aria-disabled", String(!canSubmit || rfqSubmissionInFlight || rfqSubmissionComplete));
   };
 
   const setSubmitLoading = (message: string): void => {
@@ -2630,6 +2633,13 @@ function initClientRfq(): void {
   const clearSubmitLoading = (): void => {
     rfqSubmissionInFlight = false;
     submitButton.textContent = submitButtonDefaultText;
+    updateSubmitButtonState();
+  };
+
+  const keepSubmitComplete = (): void => {
+    rfqSubmissionInFlight = false;
+    rfqSubmissionComplete = true;
+    submitButton.textContent = "Request received";
     updateSubmitButtonState();
   };
 
@@ -3171,18 +3181,20 @@ function initClientRfq(): void {
     if (rfqSubmissionInFlight) return;
     const { payload, vehicle } = buildPayload(isFinal);
     const rawToken = new URLSearchParams(window.location.search).get("token");
-    if (isFinal) setSubmitLoading("Sending request...");
+    if (isFinal) setSubmitLoading("Sending your request...");
 
     if (isSupabaseConfigured) {
       try {
         const result = await submitPublicRfq(rawToken, payload);
         if (isFinal) {
-          output.innerHTML = `<strong>Request received.</strong><span>Reference: ${escapeHtml(result.public_reference)}</span><span>Finalising route and pricing for review...</span>`;
-          await autoRouteSubmittedRfq({
+          output.innerHTML = `<strong>Thanks - your quote request has been received.</strong><span>Reference: ${escapeHtml(result.public_reference)}</span><span>Our team will review your request and send your quote shortly.</span>`;
+          keepSubmitComplete();
+          void autoRouteSubmittedRfq({
               quoteRequestId: result.quote_request_id,
               responseToken: result.response_token,
               publicReference: result.public_reference
             }).catch((error) => console.warn("Route automation did not complete", error));
+          return;
         }
         output.innerHTML = isFinal
           ? `<strong>Thanks - your quote request has been received.</strong><span>Reference: ${escapeHtml(result.public_reference)}</span><span>Our team will review your request and send your quote shortly.</span>`
@@ -3191,7 +3203,7 @@ function initClientRfq(): void {
         console.warn("Public RFQ submission failed", error);
         output.innerHTML = `<strong>We could not submit your quote request.</strong><span>Please check the required fields and try again.</span>`;
       } finally {
-        if (isFinal) clearSubmitLoading();
+        if (isFinal && !rfqSubmissionComplete) clearSubmitLoading();
       }
       return;
     }
@@ -3235,7 +3247,27 @@ function initClientRfq(): void {
     output.innerHTML = isFinal
       ? `<strong>Thanks - your quote request has been received.</strong><span>Reference: Local draft</span><span>Our team will review your request and send your quote shortly.</span>`
       : `<strong>Draft saved.</strong><span>The secure RFQ token remains valid for continuing later.</span>`;
-    if (isFinal) clearSubmitLoading();
+    if (isFinal) keepSubmitComplete();
+  };
+
+  const submitFinalRequest = (): void => {
+    if (rfqSubmissionInFlight || rfqSubmissionComplete) return;
+    if (currentStep !== panels.length - 1) {
+      setStep(panels.length - 1);
+      output.innerHTML = `<strong>Almost there.</strong><span>Please review your details before requesting a quote.</span>`;
+      updateSubmitButtonState();
+      return;
+    }
+    const invalidStep = panels.find((panel) => !validateStep(Number(panel.dataset.step)));
+    if (invalidStep) {
+      setStep(Number(invalidStep.dataset.step));
+      return;
+    }
+    if (submitButton.disabled) {
+      output.innerHTML = `<strong>Almost there.</strong><span>Please complete the required fields before requesting a quote.</span>`;
+      return;
+    }
+    void submitWizard(true);
   };
 
   form.addEventListener("input", refreshSummary);
@@ -3275,13 +3307,11 @@ function initClientRfq(): void {
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (rfqSubmissionInFlight || submitButton.disabled) return;
-    const invalidStep = panels.find((panel) => !validateStep(Number(panel.dataset.step)));
-    if (invalidStep) {
-      setStep(Number(invalidStep.dataset.step));
-      return;
-    }
-    void submitWizard(true);
+    submitFinalRequest();
+  });
+  submitButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    submitFinalRequest();
   });
   saveDraftButton.addEventListener("click", () => void submitWizard(false));
   addStopButton.addEventListener("click", () => {

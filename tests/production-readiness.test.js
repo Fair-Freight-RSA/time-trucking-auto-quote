@@ -110,13 +110,17 @@ test("public RFQ submit button has loading, duplicate-click protection, and succ
   const app = read("src/app.ts");
 
   assert.ok(app.includes("let rfqSubmissionInFlight = false"), "RFQ submit path must track an in-flight submission");
-  assert.ok(app.includes("setSubmitLoading(\"Sending request...\")"), "valid Review submit should immediately show a loading state");
+  assert.ok(app.includes("let rfqSubmissionComplete = false"), "successful RFQ submission should lock the final submit action");
+  assert.ok(app.includes("form.noValidate = true"), "RFQ should use custom validation instead of silent browser-native blocking");
+  assert.ok(app.includes("setSubmitLoading(\"Sending your request...\")"), "valid Review submit should immediately show a loading state");
   assert.ok(app.includes("submitButton.textContent = \"Sending request...\""), "submit button should visibly change while submitting");
-  assert.ok(app.includes("if (rfqSubmissionInFlight || submitButton.disabled) return;"), "duplicate clicks must not start another submission");
+  assert.ok(app.includes("submitButton.addEventListener(\"click\""), "the actual rendered Request Quote button must have an explicit click handler");
+  assert.ok(app.includes("if (rfqSubmissionInFlight || rfqSubmissionComplete) return;"), "duplicate clicks must not start another submission");
   assert.ok(app.includes("const result = await submitPublicRfq(rawToken, payload)"), "click path must await the existing public RFQ submit call");
-  assert.ok(app.includes("Finalising route and pricing for review..."), "customer should see progress while route/pricing automation runs");
+  assert.ok(app.includes("void autoRouteSubmittedRfq"), "route/pricing automation must run after RFQ creation without blocking customer acknowledgement");
   assert.ok(app.includes("Thanks - your quote request has been received."), "success state must render a customer-safe confirmation");
-  assert.ok(app.includes("finally {\n        if (isFinal) clearSubmitLoading();\n      }"), "button state must recover after success or failure");
+  assert.ok(app.includes("keepSubmitComplete()"), "successful RFQ creation should keep the submit button disabled");
+  assert.ok(app.includes("if (isFinal && !rfqSubmissionComplete) clearSubmitLoading();"), "button state must recover only after actual creation failure");
 });
 
 if (process.exitCode) {
