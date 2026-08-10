@@ -2439,7 +2439,12 @@ function initClientRfq(): void {
     const field = (name: string) => card.querySelector<HTMLInputElement>(`[data-cargo-field="${name}"]`);
     const totalWeight = Number(card.querySelector<HTMLInputElement>("[data-total-weight]")?.value ?? 0) || 0;
     const perItem = card.querySelector<HTMLInputElement>("[data-weight-per-item-toggle]")?.checked ?? false;
-    const quantity = Number(card.querySelector<HTMLInputElement>("[data-cargo-quantity]")?.value ?? 1) || 1;
+    const quantityFields = Array.from(card.querySelectorAll<HTMLInputElement>("[data-cargo-quantity]"));
+    const visibleQuantityFields = quantityFields.filter((input) => !input.closest("[hidden]"));
+    const quantityInput = perItem
+      ? visibleQuantityFields[0] ?? quantityFields[0]
+      : visibleQuantityFields.at(-1) ?? quantityFields.at(-1);
+    const quantity = Number(quantityInput?.value ?? 1) || 1;
     const itemWeight = Number(card.querySelector<HTMLInputElement>("[data-item-weight]")?.value ?? 0) || 0;
     const freightType = selectedFreightType(card);
     const dimensionNote = card.querySelector<HTMLInputElement>("[data-dimension-note]")?.value.trim() ?? "";
