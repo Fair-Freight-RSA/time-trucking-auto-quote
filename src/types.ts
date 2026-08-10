@@ -16,6 +16,7 @@ export type InternalRole = "owner" | "manager" | "staff" | "viewer";
 export type InternalUserStatus = "active" | "revoked";
 export type StopType = "collection" | "delivery" | "warehouse" | "border" | "other";
 export type CargoCategory = "general_freight" | "machinery" | "dangerous_goods" | "refrigerated" | "other";
+export type EquipmentSource = "own_fleet" | "subcontractor" | "either";
 
 export interface InternalUser {
   id: string;
@@ -215,6 +216,54 @@ export interface VehicleRecommendationRecord {
   override_vehicle_type: string | null;
   override_trailer_type: string | null;
   override_reason: string | null;
+  system_equipment_profile_id?: string | null;
+  final_equipment_profile_id?: string | null;
+  equipment_source?: EquipmentSource | null;
+  equipment_alternatives?: EquipmentAlternativeRecord[] | null;
+  estimated_deck_utilization_percent?: number | null;
+  recommendation_reasoning?: string[] | null;
+  overridden_by?: string | null;
+  overridden_at?: string | null;
+  reset_to_system_at?: string | null;
+}
+
+export interface EquipmentAlternativeRecord {
+  id: string;
+  equipment_code?: string;
+  display_name: string;
+  trailer_body: string;
+  units: number;
+}
+
+export interface StandardEquipmentProfileRecord {
+  id: string;
+  equipment_code: string;
+  display_name: string;
+  vehicle_class: string;
+  trailer_body: string;
+  payload_capacity_kg: number | null;
+  usable_cube_m3: number | null;
+  deck_length_m: number | null;
+  deck_width_m: number | null;
+  usable_deck_area_m2: number | null;
+  typical_pallet_capacity: number | null;
+  enclosed: boolean;
+  open_deck: boolean;
+  side_loading: boolean;
+  rear_loading: boolean;
+  refrigerated: boolean;
+  specialist_abnormal: boolean;
+  fuel_consumption_l_per_100km: number;
+  average_tyre_cost_per_km: number;
+  maintenance_cost_per_km: number;
+  insurance_cost_per_km: number;
+  depreciation_cost_per_km: number;
+  vehicle_overhead_per_km: number;
+  equipment_source_default: EquipmentSource;
+  recommendation_priority: number;
+  is_active: boolean;
+  notes: string | null;
+  source_note: string | null;
 }
 
 export interface TransportRequirementFlagRecord {

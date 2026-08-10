@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { CargoCategory, CustomerPortalRecord, InternalRole, InternalSettingsPayload, InternalUserRecord, PublicQuoteDocumentRecord, PublicQuoteResponseRecord, QuoteDocumentRecord, QuoteRequestRecord, QuoteStatus, StopType } from "./types";
+import type { CargoCategory, CustomerPortalRecord, EquipmentSource, InternalRole, InternalSettingsPayload, InternalUserRecord, PublicQuoteDocumentRecord, PublicQuoteResponseRecord, QuoteDocumentRecord, QuoteRequestRecord, QuoteStatus, StandardEquipmentProfileRecord, StopType } from "./types";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -326,6 +326,36 @@ export async function recordPricingComponentOverride(input: {
     override_reason_value: input.overrideReason
   });
   if (error) throw error;
+}
+
+export async function listStandardEquipmentProfiles(): Promise<StandardEquipmentProfileRecord[]> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase
+    .from("standard_equipment_profiles")
+    .select("*")
+    .eq("is_active", true)
+    .order("recommendation_priority", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as StandardEquipmentProfileRecord[];
+}
+
+export async function applyEquipmentOverride(input: {
+  quoteRequestId: string;
+  equipmentProfileId: string | null;
+  unitCount: number;
+  equipmentSource: EquipmentSource;
+  overrideReason: string;
+}): Promise<string> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.rpc("ttaq_apply_equipment_override", {
+    target_quote_request_id: input.quoteRequestId,
+    target_equipment_profile_id: input.equipmentProfileId,
+    unit_count_value: input.unitCount,
+    equipment_source_value: input.equipmentSource,
+    override_reason_value: input.overrideReason
+  });
+  if (error) throw error;
+  return String(data);
 }
 
 export async function savePricingSettings(payload: Record<string, unknown>): Promise<void> {

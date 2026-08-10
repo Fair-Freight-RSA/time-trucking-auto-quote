@@ -4,6 +4,7 @@ import {
   buildRfqLinkEmail
 } from "./emailPlaceholders";
 import {
+  applyEquipmentOverride,
   archiveQuoteRequest,
   autoRouteSubmittedRfq,
   createInternalRfqLink,
@@ -12,6 +13,7 @@ import {
   getPublicQuotePdfUrl,
   hasSupabaseSession,
   isSupabaseConfigured,
+  listStandardEquipmentProfiles,
   listInternalUsers,
   loadCurrentInternalUser,
   loadAdminQuoteRequest,
@@ -62,6 +64,7 @@ import type {
   QuoteDocumentRecord,
   RouteEstimateRecord,
   RouteEstimateStopRecord,
+  StandardEquipmentProfileRecord,
   TransportRequirementFlagRecord,
   TransportJobRecord,
   VehicleRecommendationRecord,
@@ -577,6 +580,15 @@ function renderVehicleIntelligenceCard(request: QuoteRequest): string {
   const fallback = calculateVehicleIntelligence(request.items ?? []);
   const recommendation = request.vehicleRecommendation ?? fallback.recommendation;
   const flags = request.transportFlags?.length ? request.transportFlags : fallback.flags;
+  const activeVehicle = recommendation.override_vehicle_type || recommendation.recommended_vehicle_type;
+  const activeTrailer = recommendation.override_trailer_type || recommendation.recommended_trailer_type;
+  const source = equipmentSourceLabel(recommendation.equipment_source);
+  const reasoning = Array.isArray(recommendation.recommendation_reasoning)
+    ? recommendation.recommendation_reasoning.filter(Boolean)
+    : [];
+  const alternatives = Array.isArray(recommendation.equipment_alternatives)
+    ? recommendation.equipment_alternatives
+    : [];
   return `
     <section class="vehicle-intelligence-card">
       <div class="card-heading">
@@ -584,13 +596,25 @@ function renderVehicleIntelligenceCard(request: QuoteRequest): string {
         <span>${recommendation.manager_review_required ? "Manager review required" : "Ready for pricing review"}</span>
       </div>
       <div class="grid three">
-        <p><strong>Vehicle</strong><span>${escapeHtml(recommendation.recommended_vehicle_type)}</span></p>
-        <p><strong>Trailer</strong><span>${escapeHtml(recommendation.recommended_trailer_type)}</span></p>
-        <p><strong>Trucks</strong><span>${recommendation.number_of_trucks}</span></p>
-        <p><strong>Payload utilisation</strong><span>${recommendation.estimated_payload_utilization_percent}%</span></p>
-        <p><strong>Volume utilisation</strong><span>${recommendation.estimated_volume_utilization_percent}%</span></p>
-        <p><strong>Override</strong><span>Placeholder for admin override and reason</span></p>
+        <p><strong>Recommended equipment</strong><span>${escapeHtml(activeVehicle)}</span></p>
+        <p><strong>Trailer/body</strong><span>${escapeHtml(activeTrailer)}</span></p>
+        <p><strong>Units</strong><span>${recommendation.number_of_trucks}</span></p>
+        <p><strong>Equipment source</strong><span>${escapeHtml(source)}</span></p>
+        <p><strong>Payload utilisation</strong><span>${formatPercent(recommendation.estimated_payload_utilization_percent)}</span></p>
+        <p><strong>Volume utilisation</strong><span>${formatPercent(recommendation.estimated_volume_utilization_percent)}</span></p>
+        <p><strong>Deck utilisation</strong><span>${formatPercent(recommendation.estimated_deck_utilization_percent)}</span></p>
+        <p><strong>Override</strong><span>${recommendation.override_reason ? escapeHtml(recommendation.override_reason) : "System recommendation active"}</span></p>
       </div>
+      ${
+        reasoning.length
+          ? `<div class="summary-block"><h3>Why this recommendation</h3><ul class="compact-list">${reasoning.map((reason) => `<li>${escapeHtml(String(reason))}</li>`).join("")}</ul></div>`
+          : ""
+      }
+      ${
+        alternatives.length
+          ? `<div class="summary-block"><h3>Alternatives</h3><div class="equipment-alt-list">${alternatives.map((profile) => `<span>${escapeHtml(profile.display_name)} - ${escapeHtml(profile.trailer_body)} - ${profile.units} unit(s)</span>`).join("")}</div></div>`
+          : ""
+      }
       <div class="flag-row">
         ${
           flags.length
@@ -599,8 +623,135 @@ function renderVehicleIntelligenceCard(request: QuoteRequest): string {
         }
       </div>
       <p class="muted">${escapeHtml(recommendation.recommendation_notes ?? "No recommendation notes captured.")}</p>
+      <div class="equipment-override-panel" id="equipmentOverridePanel">
+        <div>
+          <strong>Henning equipment review</strong>
+          <span>Override the selected vehicle/equipment only when operational judgement differs from the system recommendation. Pricing recalculates after save.</span>
+        </div>
+        <div class="grid three">
+          <label>Equipment profile
+            <select id="equipmentProfileSelect" data-current-profile="${escapeHtml(recommendation.final_equipment_profile_id ?? "")}">
+              <option value="">Loading equipment profiles...</option>
+            </select>
+          </label>
+          <label>Units
+            <input id="equipmentUnitCount" type="number" min="1" step="1" value="${recommendation.number_of_trucks}">
+          </label>
+          <label>Source
+            <select id="equipmentSourceSelect">
+              <option value="either"${recommendation.equipment_source === "either" || !recommendation.equipment_source ? " selected" : ""}>Either / not decided</option>
+              <option value="own_fleet"${recommendation.equipment_source === "own_fleet" ? " selected" : ""}>Own fleet</option>
+              <option value="subcontractor"${recommendation.equipment_source === "subcontractor" ? " selected" : ""}>Subcontractor</option>
+            </select>
+          </label>
+        </div>
+        <label>Override reason
+          <textarea id="equipmentOverrideReason" rows="2" placeholder="Required when overriding equipment">${escapeHtml(recommendation.override_reason ?? "")}</textarea>
+        </label>
+        <div class="button-row">
+          <button class="primary" type="button" id="applyEquipmentOverrideButton">Apply equipment override</button>
+          <button type="button" id="resetEquipmentOverrideButton">Reset to system</button>
+        </div>
+      </div>
     </section>
   `;
+}
+
+function equipmentSourceLabel(source: string | null | undefined): string {
+  if (source === "own_fleet") return "Own fleet";
+  if (source === "subcontractor") return "Subcontractor";
+  return "Either / not decided";
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (!Number.isFinite(Number(value))) return "0%";
+  return `${Number(value).toFixed(2).replace(/\.00$/, "")}%`;
+}
+
+async function hydrateEquipmentOverrideControls(request: QuoteRequest, canEdit: boolean, output: HTMLElement): Promise<void> {
+  const profileSelect = document.querySelector<HTMLSelectElement>("#equipmentProfileSelect");
+  const unitInput = document.querySelector<HTMLInputElement>("#equipmentUnitCount");
+  const sourceSelect = document.querySelector<HTMLSelectElement>("#equipmentSourceSelect");
+  const reasonInput = document.querySelector<HTMLTextAreaElement>("#equipmentOverrideReason");
+  const applyButton = document.querySelector<HTMLButtonElement>("#applyEquipmentOverrideButton");
+  const resetButton = document.querySelector<HTMLButtonElement>("#resetEquipmentOverrideButton");
+  if (!profileSelect || !unitInput || !sourceSelect || !reasonInput || !applyButton || !resetButton) return;
+
+  const setDisabled = (disabled: boolean): void => {
+    profileSelect.disabled = disabled;
+    unitInput.disabled = disabled;
+    sourceSelect.disabled = disabled;
+    reasonInput.disabled = disabled;
+    applyButton.disabled = disabled;
+    resetButton.disabled = disabled;
+  };
+
+  if (!isSupabaseConfigured) {
+    profileSelect.innerHTML = `<option value="">Connect Supabase to load equipment profiles</option>`;
+    setDisabled(true);
+    return;
+  }
+
+  setDisabled(!canEdit);
+  try {
+    const profiles = await listStandardEquipmentProfiles();
+    const currentProfileId = profileSelect.dataset.currentProfile ?? "";
+    profileSelect.innerHTML = profiles.length
+      ? profiles.map((profile) => `<option value="${escapeHtml(profile.id)}"${profile.id === currentProfileId ? " selected" : ""}>${escapeHtml(profile.display_name)} - ${escapeHtml(profile.trailer_body)} - ${formatKg(Number(profile.payload_capacity_kg ?? 0))} kg</option>`).join("")
+      : `<option value="">No active equipment profiles found</option>`;
+  } catch (error) {
+    profileSelect.innerHTML = `<option value="">Equipment profiles could not load</option>`;
+    output.innerHTML = `<strong>Equipment profiles unavailable.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+  }
+
+  applyButton.addEventListener("click", async () => {
+    const equipmentProfileId = profileSelect.value || null;
+    const unitCount = Number(unitInput.value);
+    const overrideReason = reasonInput.value.trim();
+    if (!equipmentProfileId) {
+      output.innerHTML = `<strong>Equipment override blocked.</strong><span>Select an active equipment profile.</span>`;
+      return;
+    }
+    if (!Number.isFinite(unitCount) || unitCount < 1) {
+      output.innerHTML = `<strong>Equipment override blocked.</strong><span>Enter at least one vehicle unit.</span>`;
+      return;
+    }
+    if (!overrideReason) {
+      output.innerHTML = `<strong>Equipment override blocked.</strong><span>Add the operational reason for the override.</span>`;
+      reasonInput.focus();
+      return;
+    }
+    try {
+      await applyEquipmentOverride({
+        quoteRequestId: request.id,
+        equipmentProfileId,
+        unitCount,
+        equipmentSource: sourceSelect.value as "own_fleet" | "subcontractor" | "either",
+        overrideReason
+      });
+      output.innerHTML = `<strong>Equipment override saved.</strong><span>Vehicle Intelligence and pricing have been recalculated.</span>`;
+      window.setTimeout(() => window.location.reload(), 900);
+    } catch (error) {
+      output.innerHTML = `<strong>Equipment override failed.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+    }
+  });
+
+  resetButton.addEventListener("click", async () => {
+    const unitCount = Number(unitInput.value);
+    try {
+      await applyEquipmentOverride({
+        quoteRequestId: request.id,
+        equipmentProfileId: null,
+        unitCount: Number.isFinite(unitCount) && unitCount > 0 ? unitCount : request.vehicleRecommendation?.number_of_trucks ?? 1,
+        equipmentSource: "either",
+        overrideReason: "Reset to system recommendation"
+      });
+      output.innerHTML = `<strong>System recommendation restored.</strong><span>Pricing has been recalculated from the system-selected equipment.</span>`;
+      window.setTimeout(() => window.location.reload(), 900);
+    } catch (error) {
+      output.innerHTML = `<strong>Reset failed.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+    }
+  });
 }
 
 function renderRouteIntelligenceCard(request: QuoteRequest): string {
@@ -2055,6 +2206,23 @@ function initPricingSettings(): void {
   const form = document.querySelector<HTMLFormElement>("#pricingSettingsForm");
   const output = document.querySelector<HTMLElement>("#pricingSettingsOutput");
   if (!form || !output) return;
+  const equipmentProfilesList = document.querySelector<HTMLElement>("#equipmentProfilesList");
+
+  if (equipmentProfilesList) {
+    if (isSupabaseConfigured) {
+      void listStandardEquipmentProfiles()
+        .then((profiles) => {
+          equipmentProfilesList.innerHTML = profiles.length
+            ? profiles.map(renderEquipmentProfileRow).join("")
+            : `<p class="muted">No active standard equipment profiles found.</p>`;
+        })
+        .catch((error) => {
+          equipmentProfilesList.innerHTML = `<p class="muted">Equipment profiles could not load: ${escapeHtml(friendlyError(error))}</p>`;
+        });
+    } else {
+      equipmentProfilesList.innerHTML = `<p class="muted">Connect Supabase to load the production equipment catalogue.</p>`;
+    }
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2122,6 +2290,30 @@ function initPricingSettings(): void {
     window.localStorage.setItem("time-trucking-auto-quote-pricing-settings", JSON.stringify(payload));
     output.innerHTML = `<strong>Pricing settings saved locally.</strong><span>Connect Supabase to persist company pricing rules.</span>`;
   });
+}
+
+function renderEquipmentProfileRow(profile: StandardEquipmentProfileRecord): string {
+  const flags = [
+    profile.enclosed ? "Enclosed" : "",
+    profile.open_deck ? "Open deck" : "",
+    profile.side_loading ? "Side loading" : "",
+    profile.refrigerated ? "Reefer" : "",
+    profile.specialist_abnormal ? "Specialist" : ""
+  ].filter(Boolean);
+  return `
+    <article class="equipment-profile-row">
+      <div>
+        <strong>${escapeHtml(profile.display_name)}</strong>
+        <span>${escapeHtml(profile.trailer_body)} - ${escapeHtml(equipmentSourceLabel(profile.equipment_source_default))}</span>
+      </div>
+      <div class="quote-meta">
+        <span>${formatKg(Number(profile.payload_capacity_kg ?? 0))} kg</span>
+        <span>${Number(profile.usable_cube_m3 ?? 0)} m3</span>
+        <span>${Number(profile.deck_length_m ?? 0)}m x ${Number(profile.deck_width_m ?? 0)}m</span>
+      </div>
+      <div class="flag-row">${flags.map((flag) => `<span class="flag info">${escapeHtml(flag)}</span>`).join("")}</div>
+    </article>
+  `;
 }
 
 function initCreateLink(): void {
@@ -3253,6 +3445,7 @@ async function initQuoteReview(): Promise<void> {
     </div>
   `;
   void hydrateRouteMapPreview(request);
+  void hydrateEquipmentOverrideControls(request, canEditReviewPrice, output);
 
   form.quotePrice.value = request.quotePrice?.toString() ?? "";
   form.adminNotes.value = request.adminNotes;

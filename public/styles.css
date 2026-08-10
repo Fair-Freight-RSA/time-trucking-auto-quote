@@ -1955,6 +1955,66 @@ output strong,
   padding: 11px;
 }
 
+.compact-list {
+  color: var(--muted);
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.equipment-alt-list,
+.equipment-profiles-list {
+  display: grid;
+  gap: 8px;
+}
+
+.equipment-alt-list span {
+  background: #f8fbff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #24344e;
+  padding: 8px 10px;
+}
+
+.equipment-override-panel {
+  background: #f8fbff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.equipment-override-panel > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.equipment-override-panel > div:first-child span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.equipment-profile-row {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.equipment-profile-row > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.equipment-profile-row > div:first-child span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .integration-notice {
   border-color: rgba(6, 23, 232, 0.18);
 }
