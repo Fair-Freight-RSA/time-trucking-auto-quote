@@ -28,18 +28,11 @@
           <p class="muted">Review RFQs, confirm route intelligence, adjust traceable pricing, generate customer-safe quote documents, and send quotes for customer accept/decline.</p>
         </section>
         <section class="card">
-          <div class="card-heading"><h2>Integration status</h2><span>Operational providers</span></div>
-          <div class="grid three">
-            <p><strong>Email</strong><span>Email events are recorded. Configure a mail provider before live sending.</span></p>
-            <p><strong>PDF</strong><span>Customer-safe printable quote documents are available; server PDF rendering is not configured.</span></p>
-            <p><strong>Attachments</strong><span>RFQ attachments require final storage-provider policy configuration.</span></p>
-          </div>
-        </section>
-        <section class="card">
-          <div class="card-heading"><h2>RFQ details</h2><span>Vehicle/trailer suggestion</span></div>
+          <div class="card-heading"><h2>RFQ details</h2><span>Action-first quote workspace</span></div>
           <div id="quoteDetail"></div>
         </section>
-        <form class="card" id="reviewForm">
+        <form class="card review-action-card" id="reviewForm">
+          <div class="card-heading"><h2>Customer quote actions</h2><span>Approve, generate, send, or revise</span></div>
           <div class="grid two">
             <label>Adjusted quote price<input name="quotePrice" type="number" min="0" step="0.01" /></label>
             <label>Admin notes<textarea name="adminNotes"></textarea></label>

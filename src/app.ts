@@ -1074,21 +1074,22 @@ function renderAcceptedLoadCard(request: QuoteRequest): string {
 
   return `
     <article class="quote-row accepted-load-row">
-      <div>
+      <div class="accepted-load-main">
         <strong>${escapeHtml(request.transportJob?.job_number ?? `LOAD-${request.publicReference ?? request.id.slice(0, 8)}`)}</strong>
         <span>${escapeHtml(request.companyName)} - ${escapeHtml(request.contactPerson)}</span>
-        <small><strong>Collection</strong> ${escapeHtml(request.collectionAddress || "Pending")}</small>
-        <small><strong>Destination</strong> ${escapeHtml(request.deliveryAddress || "Pending")}</small>
-        <small><strong>Collection date</strong> ${escapeHtml(request.collectionDate || "Pending")}</small>
-        <small><strong>Load</strong> ${escapeHtml(load || "Pending")}</small>
-        <small><strong>Vehicle</strong> ${escapeHtml(vehicleLabel || "To be confirmed")}</small>
+        <small>${escapeHtml(quoteShortRoute(request))}</small>
       </div>
-      <div>
+      <div class="accepted-load-register">
+        <span><strong>Collection</strong>${escapeHtml(request.collectionDate || "Pending")}</span>
+        <span><strong>Load</strong>${escapeHtml(load || "Pending")}</span>
+        <span><strong>Vehicle</strong>${escapeHtml(vehicleLabel || "To be confirmed")}</span>
+        <span><strong>Accepted price</strong>${money(acceptedLoadPrice(request))}</span>
+        <span><strong>Accepted date</strong>${escapeHtml(formatDateTime(acceptedAt))}</span>
+      </div>
+      <div class="quote-card-actions">
         <span class="badge">Accepted load</span>
-        <small><strong>Accepted price</strong> ${money(acceptedLoadPrice(request))}</small>
-        <small><strong>Accepted date</strong> ${escapeHtml(formatDateTime(acceptedAt))}</small>
         <small><strong>Status</strong> ${escapeHtml(statusLabels[request.status] ?? request.status)}</small>
-        <a class="button small" href="./quote-review.html?id=${request.id}">Open quote</a>
+        <a class="button small" href="./quote-review.html?id=${request.id}">Open Quote</a>
       </div>
     </article>
   `;
@@ -1185,11 +1186,15 @@ function renderAdminSettings(settings: InternalSettingsPayload): string {
       </section>
 
       <section>
-        <div class="card-heading"><h2>System settings</h2><span>JSON foundations</span></div>
-        <div class="notice">
+        <div class="card-heading"><h2>Integrations</h2><span>Operational provider status</span></div>
+        <div class="notice integration-notice">
           <strong>Integration status</strong>
           <span>Google Maps: ${googleMapsApiKey ? "configured" : "not configured"}. PDF, email, signed downloads, and file uploads use the production-integrations Edge Function. Email delivery requires server-side provider secrets; missing secrets are recorded as failed email attempts.</span>
         </div>
+      </section>
+
+      <section>
+        <div class="card-heading"><h2>System settings</h2><span>JSON foundations</span></div>
         <div class="grid two">
           ${settings.system_settings.map((setting, index) => renderSystemSetting(setting, index, canUpdate)).join("")}
         </div>
@@ -2875,6 +2880,118 @@ function initClientRfq(): void {
   setStep(0);
 }
 
+type QuoteQueueViewKey = "needs_review" | "approved" | "sent" | "accepted" | "declined" | "archived" | "all";
+
+const quoteQueueViews: Array<{ key: QuoteQueueViewKey; label: string; matches: (request: QuoteRequest) => boolean }> = [
+  { key: "needs_review", label: "Needs Review", matches: (request) => ["rfq_submitted", "client_submitted", "admin_review", "adjusted"].includes(request.status) },
+  { key: "approved", label: "Approved", matches: (request) => request.status === "approved" },
+  { key: "sent", label: "Sent", matches: (request) => request.status === "sent_to_client" },
+  { key: "accepted", label: "Accepted", matches: (request) => Boolean(request.transportJob) || ["client_accepted", "converted_to_load"].includes(request.status) },
+  { key: "declined", label: "Declined / Review", matches: (request) => request.status === "client_declined" },
+  { key: "archived", label: "Archived", matches: (request) => request.status === "expired" },
+  { key: "all", label: "All", matches: () => true }
+];
+
+function quoteQueueViewFromStatus(status: string | null): QuoteQueueViewKey {
+  if (!status) return "needs_review";
+  if (["rfq_submitted", "client_submitted", "admin_review", "adjusted", "needs_review"].includes(status)) return "needs_review";
+  if (status === "approved") return "approved";
+  if (status === "sent_to_client" || status === "sent") return "sent";
+  if (["client_accepted", "converted_to_load", "accepted"].includes(status)) return "accepted";
+  if (status === "client_declined" || status === "declined") return "declined";
+  if (status === "expired" || status === "archived") return "archived";
+  if (status === "all") return "all";
+  return "needs_review";
+}
+
+function shortAddress(address: string): string {
+  const [primary] = address.split(",").map((part) => part.trim()).filter(Boolean);
+  return primary || "Pending";
+}
+
+function quoteShortRoute(request: QuoteRequest): string {
+  return `${shortAddress(request.collectionAddress)} -> ${shortAddress(request.deliveryAddress)}`;
+}
+
+function quoteTotalWeight(request: QuoteRequest): number {
+  return request.items?.length
+    ? request.items.reduce((sum, item) => sum + itemTotalWeightKg(item), 0)
+    : (request.quantity || 1) * (request.weight ?? 0);
+}
+
+function quoteVehicleLabel(request: QuoteRequest): string {
+  return request.vehicleRecommendation?.recommended_vehicle_type ?? request.suggestedVehicle ?? "Vehicle review";
+}
+
+function quoteSearchText(request: QuoteRequest): string {
+  return [
+    request.companyName,
+    request.contactPerson,
+    request.publicReference,
+    request.id,
+    request.collectionAddress,
+    request.deliveryAddress,
+    statusLabels[request.status],
+    quoteShortRoute(request)
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function renderQuoteQueue(requests: QuoteRequest[], activeView: QuoteQueueViewKey, searchTerm = ""): string {
+  const counts = Object.fromEntries(quoteQueueViews.map((view) => [view.key, requests.filter(view.matches).length])) as Record<QuoteQueueViewKey, number>;
+
+  return `
+    <div class="quote-toolbar">
+      <div class="filter-tabs" role="tablist" aria-label="Quote filters">
+        ${quoteQueueViews.map((view) => `
+          <button type="button" class="filter-chip ${view.key === activeView ? "active" : ""}" data-quote-filter="${view.key}" role="tab" aria-selected="${view.key === activeView}">
+            ${escapeHtml(view.label)} <span>${counts[view.key]}</span>
+          </button>
+        `).join("")}
+      </div>
+      <label class="quote-search">Search quotes
+        <input data-quote-search value="${escapeHtml(searchTerm)}" placeholder="Customer, TTAQ reference, collection, destination" />
+      </label>
+    </div>
+    <div class="quote-list compact-quote-list" data-quote-results>${renderQuoteResults(requests, activeView, searchTerm)}</div>
+  `;
+}
+
+function renderQuoteResults(requests: QuoteRequest[], activeView: QuoteQueueViewKey, searchTerm = ""): string {
+  const selectedView = quoteQueueViews.find((view) => view.key === activeView) ?? quoteQueueViews[0];
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const scopedRequests = requests
+    .filter((request) => selectedView.matches(request))
+    .filter((request) => !normalizedSearch || quoteSearchText(request).includes(normalizedSearch))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return scopedRequests.length
+    ? scopedRequests.map(renderCompactQuoteCard).join("")
+    : `<div class="empty-state"><strong>No quotes found</strong><span>${normalizedSearch ? "Try another customer, reference, collection, or destination." : "This queue is clear. Older records are still available through the other filters."}</span></div>`;
+}
+
+function renderCompactQuoteCard(request: QuoteRequest): string {
+  const totalWeight = quoteTotalWeight(request);
+  const quotePrice = request.quotePrice ?? request.pricingCalculation?.recommended_selling_price ?? null;
+  return `
+    <article class="quote-row compact-quote-row">
+      <div class="quote-main">
+        <div class="quote-title-line">
+          <strong>${escapeHtml(request.companyName || "Customer pending")}</strong>
+          <span class="badge">${escapeHtml(statusLabels[request.status] ?? request.status)}</span>
+        </div>
+        <span class="quote-reference">${escapeHtml(request.publicReference ?? request.id)}</span>
+        <span class="quote-route">${escapeHtml(quoteShortRoute(request))}</span>
+        <small>${escapeHtml(formatDateTime(request.createdAt))}</small>
+      </div>
+      <div class="quote-meta">
+        <span>${formatKg(totalWeight)} kg</span>
+        <span>${money(quotePrice)}</span>
+        <span>${escapeHtml(quoteVehicleLabel(request))}</span>
+      </div>
+      <a class="button small primary" href="./quote-review.html?id=${request.id}">Open Quote</a>
+    </article>
+  `;
+}
+
 async function initQuoteReview(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   const id = params.get("id") ?? null;
@@ -2898,22 +3015,25 @@ async function initQuoteReview(): Promise<void> {
     if (isSupabaseConfigured) {
       try {
         const records = await loadAdminQuoteRequests();
-        const requests = records.map(requestFromRecord).filter((item) => !statusFilter || item.status === statusFilter);
-        detail.innerHTML = requests.length
-          ? `<div class="quote-list">${requests.map((item) => `
-              <article class="quote-row">
-                <div>
-                  <strong>${escapeHtml(item.companyName)}</strong>
-                  <span>${escapeHtml(item.publicReference ?? item.id)} - ${escapeHtml(item.collectionAddress)} to ${escapeHtml(item.deliveryAddress)}</span>
-                  <small>${escapeHtml(formatDateTime(item.createdAt))}</small>
-                </div>
-                <div>
-                  <span class="badge">${escapeHtml(statusLabels[item.status] ?? item.status)}</span>
-                  <a class="button small" href="./quote-review.html?id=${item.id}">Open RFQ</a>
-                </div>
-              </article>
-            `).join("")}</div>`
-          : `<p class="muted">No RFQs match this queue. New customer submissions will appear here after secure RFQ links are completed.</p>`;
+        const requests = records.map(requestFromRecord);
+        let activeView = quoteQueueViewFromStatus(statusFilter);
+        let searchTerm = "";
+        const renderQueue = () => {
+          detail.innerHTML = renderQuoteQueue(requests, activeView, searchTerm);
+          detail.querySelectorAll<HTMLButtonElement>("[data-quote-filter]").forEach((button) => {
+            button.addEventListener("click", () => {
+              activeView = button.dataset.quoteFilter as QuoteQueueViewKey;
+              searchTerm = detail.querySelector<HTMLInputElement>("[data-quote-search]")?.value ?? "";
+              renderQueue();
+            });
+          });
+          detail.querySelector<HTMLInputElement>("[data-quote-search]")?.addEventListener("input", (event) => {
+            searchTerm = (event.currentTarget as HTMLInputElement).value;
+            const results = detail.querySelector<HTMLElement>("[data-quote-results]");
+            if (results) results.innerHTML = renderQuoteResults(requests, activeView, searchTerm);
+          });
+        };
+        renderQueue();
       } catch (error) {
         detail.innerHTML = `<p class="muted">RFQ queue could not load: ${escapeHtml(friendlyError(error))}</p>`;
       }

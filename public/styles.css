@@ -1728,3 +1728,303 @@ output strong,
     font-size: 15px;
   }
 }
+
+/* Premium operations polish */
+.content {
+  padding-bottom: 48px;
+}
+
+.hero {
+  margin-bottom: 16px;
+}
+
+.hero h1 {
+  max-width: 820px;
+}
+
+.card {
+  gap: 14px;
+}
+
+.card-heading h2 {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.nav a {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+}
+
+.quote-toolbar {
+  display: grid;
+  gap: 12px;
+}
+
+.filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filter-chip {
+  min-height: 36px;
+  border-radius: 999px;
+  padding: 0 12px;
+  width: auto;
+}
+
+.filter-chip span {
+  min-width: 22px;
+  border-radius: 999px;
+  background: #eef3ff;
+  color: var(--tt-blue);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 7px;
+}
+
+.filter-chip.active {
+  background: var(--tt-blue);
+  border-color: var(--tt-blue);
+  color: #ffffff;
+}
+
+.filter-chip.active span {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.quote-search {
+  max-width: 560px;
+}
+
+.compact-quote-list {
+  gap: 8px;
+}
+
+.compact-quote-row {
+  align-items: center;
+  gap: 14px;
+}
+
+.quote-main {
+  min-width: 0;
+}
+
+.quote-title-line {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quote-title-line strong,
+.accepted-load-main strong {
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.quote-reference,
+.quote-route {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote-reference {
+  color: var(--tt-blue);
+  font-weight: 900;
+}
+
+.quote-meta,
+.accepted-load-register {
+  display: grid;
+  gap: 6px;
+}
+
+.quote-meta {
+  color: #24344e;
+  font-size: 12px;
+  min-width: 172px;
+}
+
+.quote-meta span,
+.accepted-load-register span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fbff;
+  padding: 5px 9px;
+}
+
+.quote-card-actions {
+  align-items: end;
+  display: grid;
+  gap: 7px;
+  justify-items: end;
+}
+
+.accepted-load-row {
+  gap: 14px;
+}
+
+.accepted-load-main {
+  min-width: 0;
+}
+
+.accepted-load-register {
+  font-size: 12px;
+}
+
+.accepted-load-register span {
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.accepted-load-register strong {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.dashboard-metric-card {
+  min-height: 112px;
+  padding: 14px;
+}
+
+.dashboard-metric-card strong {
+  font-size: clamp(26px, 4vw, 36px);
+}
+
+.action-card {
+  min-height: 82px;
+  padding: 14px 38px 14px 14px;
+}
+
+.activity-item {
+  padding: 11px 12px;
+}
+
+.review-action-card .button-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, max-content));
+}
+
+.review-action-card #markSentButton,
+.review-action-card #generateQuoteButton {
+  border-color: var(--tt-blue);
+  color: var(--tt-blue);
+}
+
+.review-action-card #archiveQuoteButton {
+  border-color: #fecaca;
+  color: var(--danger);
+}
+
+.detail-grid {
+  gap: 14px;
+}
+
+.vehicle-intelligence-card,
+.pricing-summary-card,
+.route-intelligence-card {
+  border-width: 1px;
+}
+
+.vehicle-intelligence-card .grid,
+.pricing-summary-card .grid,
+.route-intelligence-card .grid {
+  gap: 10px;
+}
+
+.summary-block {
+  padding: 11px;
+}
+
+.integration-notice {
+  border-color: rgba(6, 23, 232, 0.18);
+}
+
+.rfq-public-content {
+  padding-top: 24px;
+}
+
+.rfq-wizard {
+  box-shadow: 0 18px 46px rgba(7, 17, 47, 0.1);
+}
+
+.wizard-steps {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.wizard-steps button {
+  border-radius: 999px;
+  justify-content: center;
+}
+
+.freight-choice-group label,
+.quick-toggle-grid .checkbox,
+.advanced-weight-toggle,
+.optional-section {
+  box-shadow: none;
+}
+
+.nested-card {
+  background: #ffffff;
+}
+
+@media (min-width: 760px) {
+  .compact-quote-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .accepted-load-row {
+    grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.4fr) auto;
+  }
+
+  .accepted-load-register {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 759px) {
+  .filter-tabs {
+    flex-wrap: nowrap;
+    margin-inline: -2px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .filter-chip {
+    flex: 0 0 auto;
+  }
+
+  .compact-quote-row,
+  .accepted-load-row {
+    grid-template-columns: 1fr;
+  }
+
+  .quote-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+  }
+
+  .quote-card-actions {
+    align-items: stretch;
+    justify-items: stretch;
+  }
+
+  .quote-card-actions .button,
+  .compact-quote-row > .button {
+    width: 100%;
+  }
+
+  .review-action-card .button-row {
+    grid-template-columns: 1fr;
+  }
+}
