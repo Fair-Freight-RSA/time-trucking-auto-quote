@@ -2158,38 +2158,69 @@ function initClientRfq(): void {
   const prevStepButton = document.querySelector<HTMLButtonElement>("#prevStepButton");
   const nextStepButton = document.querySelector<HTMLButtonElement>("#nextStepButton");
   const saveDraftButton = document.querySelector<HTMLButtonElement>("#saveDraftButton");
+  const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]');
   const stepButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-step-button]"));
   const panels = Array.from(document.querySelectorAll<HTMLElement>("[data-step]"));
 
-  if (!stopsList || !cargoItemsList || !dynamicQuestionsList || !reviewSummary || !addStopButton || !addCargoItemButton || !prevStepButton || !nextStepButton || !saveDraftButton) return;
+  if (!stopsList || !cargoItemsList || !dynamicQuestionsList || !reviewSummary || !addStopButton || !addCargoItemButton || !prevStepButton || !nextStepButton || !saveDraftButton || !submitButton) return;
 
   let currentStep = 0;
   let stopCounter = 0;
   let cargoCounter = 0;
 
+  const clearValidation = (): void => {
+    form.querySelectorAll("[aria-invalid='true']").forEach((field) => field.removeAttribute("aria-invalid"));
+    form.querySelectorAll(".validation-message").forEach((message) => message.remove());
+  };
+
+  const showValidation = (field: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null, message: string): boolean => {
+    output.innerHTML = `<strong>Almost there.</strong><span>${escapeHtml(message)}</span>`;
+    if (field) {
+      field.setAttribute("aria-invalid", "true");
+      const label = field.closest("label");
+      label?.querySelector(".validation-message")?.remove();
+      label?.insertAdjacentHTML("beforeend", `<small class="validation-message">${escapeHtml(message)}</small>`);
+      field.focus();
+    }
+    return false;
+  };
+
+  const namedField = (name: string): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null =>
+    form.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[name="${name}"]`);
+
   const validateStep = (step: number): boolean => {
+    clearValidation();
     const panel = panels.find((item) => Number(item.dataset.step) === step);
     if (!panel) return true;
-    const requiredFields = Array.from(panel.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("[required]"));
-    const missingRequired = requiredFields.find((field) => !field.value.trim());
-    if (missingRequired) {
-      missingRequired.focus();
-      output.innerHTML = `<strong>More detail needed.</strong><span>Please complete the highlighted field before continuing.</span>`;
-      return false;
-    }
     if (step === 0) {
-      const stops = collectStops();
-      if (!stops.find((stop) => stop.stop_type === "collection" && stop.address) || !stops.find((stop) => stop.stop_type === "delivery" && stop.address)) {
-        output.innerHTML = `<strong>Route incomplete.</strong><span>Please add both collection and delivery addresses.</span>`;
-        return false;
-      }
+      const company = namedField("companyName");
+      const contact = namedField("contactPerson");
+      const email = namedField("email") as HTMLInputElement | null;
+      const phone = namedField("phone");
+      if (!company?.value.trim()) return showValidation(company, "Please add your company name.");
+      if (!contact?.value.trim()) return showValidation(contact, "Please add a contact person.");
+      if (!email?.value.trim() || !email.checkValidity()) return showValidation(email, "Please enter a valid email address.");
+      if (!phone?.value.trim()) return showValidation(phone, "Please add a phone number.");
     }
     if (step === 1) {
+      const stops = collectStops();
+      const collectionCard = stopsList.querySelector<HTMLElement>('[data-primary-stop="collection"]');
+      const deliveryCard = stopsList.querySelector<HTMLElement>('[data-primary-stop="delivery"]');
+      const collectionField = collectionCard?.querySelector<HTMLInputElement>('[data-stop-field="address"]') ?? null;
+      const deliveryField = deliveryCard?.querySelector<HTMLInputElement>('[data-stop-field="address"]') ?? null;
+      if (!stops.find((stop) => stop.stop_type === "collection" && stop.address)) return showValidation(collectionField, "Please add the collection address.");
+      if (!stops.find((stop) => stop.stop_type === "delivery" && stop.address)) return showValidation(deliveryField, "Please add the delivery address.");
+      const collectionDate = namedField("preferredCollectionDate");
+      if (!collectionDate?.value.trim()) return showValidation(collectionDate, "Please choose a preferred collection date.");
+    }
+    if (step === 2) {
       const cargoItems = collectCargoItems();
-      if (!cargoItems.length || cargoItems.some((item) => !item.description || !Number(item.weight_kg))) {
-        output.innerHTML = `<strong>Load incomplete.</strong><span>Add a cargo description and weight for each cargo item.</span>`;
-        return false;
-      }
+      const cargoCard = cargoItemsList.querySelector<HTMLElement>("[data-cargo-card]");
+      const descriptionField = cargoCard?.querySelector<HTMLInputElement>('[data-cargo-field="description"]') ?? null;
+      const totalWeightField = cargoCard?.querySelector<HTMLInputElement>("[data-total-weight]") ?? null;
+      if (!cargoItems.length) return showValidation(null, "Please add what you are moving.");
+      if (cargoItems.some((item) => !item.description?.trim())) return showValidation(descriptionField, "Please add a cargo description.");
+      if (cargoItems.some((item) => itemTotalWeightKg(item) <= 0)) return showValidation(totalWeightField, "Total shipment weight must be more than 0 kg.");
     }
     output.innerHTML = "";
     return true;
@@ -2201,11 +2232,12 @@ function initClientRfq(): void {
     stepButtons.forEach((button) => button.classList.toggle("active", Number(button.dataset.stepButton) === currentStep));
     prevStepButton.hidden = currentStep === 0;
     nextStepButton.hidden = currentStep === panels.length - 1;
+    submitButton.hidden = currentStep !== panels.length - 1;
     refreshSummary();
   };
 
   const stopTemplate = (index: number, type: string, title: string, removable = true) => `
-    <article class="nested-card" data-stop-card${removable ? "" : " data-primary-stop=\"true\""}>
+    <article class="nested-card" data-stop-card${removable ? "" : ` data-primary-stop="${type}"`}>
       <header>
         <h3>${title}</h3>
         ${removable ? `<button type="button" data-remove-stop>Remove</button>` : ""}
@@ -2226,61 +2258,15 @@ function initClientRfq(): void {
               </select>
             </label>
           ` : ""}
-          <div class="date-window-group">
-            <label>Date<input data-stop-date type="date" /></label>
-            <label>Time window
-              <select data-stop-time-window>
-                <option value="Any time">Any time</option>
-                <option value="06:00 - 09:00">06:00 - 09:00</option>
-                <option value="09:00 - 12:00">09:00 - 12:00</option>
-                <option value="12:00 - 15:00">12:00 - 15:00</option>
-                <option value="15:00 - 18:00">15:00 - 18:00</option>
-                <option value="Specific time">Specific time</option>
-              </select>
-            </label>
-            <label class="specific-time-field" hidden>Specific time<input data-stop-specific-time type="time" /></label>
-            <input type="hidden" data-stop-field="date_time_window" />
-          </div>
-          <div class="method-group">
-            <label>Loading method
-              <select data-method-select data-stop-method="loading_method">
-                <option value="">Select method</option>
-                <option value="Forklift">Forklift</option>
-                <option value="Crane">Crane</option>
-                <option value="Hand loading">Hand loading</option>
-                <option value="Dock loading">Dock loading</option>
-                <option value="Pallet jack">Pallet jack</option>
-                <option value="Customer equipment">Customer equipment</option>
-                <option value="Driver assistance required">Driver assistance required</option>
-                <option value="Other / Not sure">Other / Not sure</option>
-              </select>
-            </label>
-            <label class="method-detail-field" hidden>Loading detail<input data-method-detail="loading_method" placeholder="Optional detail" /></label>
-            <input type="hidden" data-stop-field="loading_method" />
-          </div>
-          <div class="method-group">
-            <label>Offloading method
-              <select data-method-select data-stop-method="offloading_method">
-                <option value="">Select method</option>
-                <option value="Forklift">Forklift</option>
-                <option value="Crane">Crane</option>
-                <option value="Hand loading">Hand loading</option>
-                <option value="Dock loading">Dock loading</option>
-                <option value="Pallet jack">Pallet jack</option>
-                <option value="Customer equipment">Customer equipment</option>
-                <option value="Driver assistance required">Driver assistance required</option>
-                <option value="Other / Not sure">Other / Not sure</option>
-              </select>
-            </label>
-            <label class="method-detail-field" hidden>Offloading detail<input data-method-detail="offloading_method" placeholder="Optional detail" /></label>
-            <input type="hidden" data-stop-field="offloading_method" />
-          </div>
-          <label>Notes<textarea data-stop-field="notes" placeholder="Access notes, reference numbers, site contact, or instructions."></textarea></label>
-          <label>Contact name<input data-stop-field="contact_name" /></label>
-          <label>Contact phone<input data-stop-field="contact_phone" /></label>
+          <label>${type === "delivery" ? "Delivery notes" : type === "collection" ? "Collection notes" : "Stop notes"}<textarea data-stop-field="notes" placeholder="Access notes, reference numbers, site contact, or instructions."></textarea></label>
         </div>
       </details>
       <input type="hidden" data-stop-field="stop_order" value="${index}" />
+      <input type="hidden" data-stop-field="date_time_window" />
+      <input type="hidden" data-stop-field="loading_method" />
+      <input type="hidden" data-stop-field="offloading_method" />
+      <input type="hidden" data-stop-field="contact_name" />
+      <input type="hidden" data-stop-field="contact_phone" />
       <input type="hidden" data-stop-field="latitude" />
       <input type="hidden" data-stop-field="longitude" />
       <input type="hidden" data-stop-field="place_id" />
@@ -2707,12 +2693,49 @@ function initClientRfq(): void {
   };
 
   const refreshSummary = () => {
-    const { vehicle, stops, cargoItems, dynamicAnswers } = buildPayload(false);
+    const { vehicle, stops, cargoItems } = buildPayload(false);
     suggestion.innerHTML = `<strong>${vehicle.suggestedVehicle}</strong><span>${vehicle.suggestedTrailer}</span><small>${vehicle.notes}</small>`;
+    const firstCollection = stops.find((stop) => stop.stop_type === "collection") ?? stops[0];
+    const firstDelivery = stops.find((stop) => stop.stop_type === "delivery") ?? stops[1];
+    const firstItem = cargoItems[0];
+    const optionalWhere = [
+      firstDelivery?.date_time_window ? `<p><strong>Delivery timing</strong><span>${escapeHtml(firstDelivery.date_time_window)}</span></p>` : "",
+      firstCollection?.loading_method ? `<p><strong>Loading</strong><span>${escapeHtml(firstCollection.loading_method)}</span></p>` : "",
+      firstDelivery?.offloading_method ? `<p><strong>Offloading</strong><span>${escapeHtml(firstDelivery.offloading_method)}</span></p>` : "",
+      firstCollection?.notes ? `<p><strong>Collection notes</strong><span>${escapeHtml(firstCollection.notes)}</span></p>` : "",
+      firstDelivery?.notes ? `<p><strong>Delivery notes</strong><span>${escapeHtml(firstDelivery.notes)}</span></p>` : ""
+    ].join("");
+    const optionalWhat = [
+      form.querySelector<HTMLInputElement>("[name='dangerousGoods']")?.checked ? "Dangerous goods" : "",
+      form.querySelector<HTMLInputElement>("[name='crossBorder']")?.checked ? "Cross-border" : "",
+      form.querySelector<HTMLInputElement>("[name='repeatLane']")?.checked ? "Regular/repeat lane" : "",
+      form.querySelector<HTMLInputElement>("[name='temperatureControlled']")?.checked ? "Temperature controlled" : "",
+      form.querySelector<HTMLInputElement>("[name='fragile']")?.checked ? "Fragile / extra handling" : "",
+      formValue(new FormData(form), "specialRequirements")
+    ].filter(Boolean).join(" | ");
     reviewSummary.innerHTML = `
-      <div class="summary-block"><h3>Route</h3>${stops.map((stop) => `<p>${stop.stop_order}. ${escapeHtml(stop.stop_type)} - ${escapeHtml(stop.address || "Address pending")}</p>`).join("")}</div>
-      <div class="summary-block"><h3>Cargo</h3>${cargoItems.map((item) => `<p>${escapeHtml(item.description || "Item")} - ${item.quantity} item(s), ${escapeHtml((item.cargo_category ?? "general_freight").replace("_", " "))}</p>`).join("")}</div>
-      <div class="summary-block"><h3>Dynamic answers</h3><p>${dynamicAnswers.length} answer(s) captured.</p></div>
+      <div class="summary-block review-summary-card">
+        <header><h3>Your details</h3><button type="button" class="button small" data-edit-step="0">Edit</button></header>
+        <p><strong>Company</strong><span>${escapeHtml(formValue(new FormData(form), "companyName") || "Not supplied")}</span></p>
+        <p><strong>Contact</strong><span>${escapeHtml(formValue(new FormData(form), "contactPerson") || "Not supplied")}</span></p>
+        <p><strong>Email</strong><span>${escapeHtml(formValue(new FormData(form), "email") || "Not supplied")}</span></p>
+        <p><strong>Phone</strong><span>${escapeHtml(formValue(new FormData(form), "phone") || "Not supplied")}</span></p>
+      </div>
+      <div class="summary-block review-summary-card">
+        <header><h3>Where &amp; when</h3><button type="button" class="button small" data-edit-step="1">Edit</button></header>
+        <p><strong>Collection</strong><span>${escapeHtml(firstCollection?.address || "Address pending")}</span></p>
+        <p><strong>Delivery</strong><span>${escapeHtml(firstDelivery?.address || "Address pending")}</span></p>
+        <p><strong>Collection date</strong><span>${escapeHtml(formValue(new FormData(form), "preferredCollectionDate") || "Date pending")}</span></p>
+        ${optionalWhere}
+      </div>
+      <div class="summary-block review-summary-card">
+        <header><h3>What</h3><button type="button" class="button small" data-edit-step="2">Edit</button></header>
+        <p><strong>Freight type</strong><span>${escapeHtml(firstItem ? freightLabel(selectedFreightType(cargoItemsList.querySelector<HTMLElement>("[data-cargo-card]")!)) : "Not supplied")}</span></p>
+        <p><strong>Description</strong><span>${escapeHtml(firstItem?.description || "Not supplied")}</span></p>
+        <p><strong>Quantity</strong><span>${escapeHtml(String(firstItem?.quantity ?? 1))}</span></p>
+        <p><strong>Total shipment weight</strong><span>${formatKg(firstItem ? itemTotalWeightKg(firstItem) : 0)} kg</span></p>
+        ${optionalWhat ? `<p><strong>Optional details</strong><span>${escapeHtml(optionalWhat)}</span></p>` : ""}
+      </div>
     `;
   };
 
@@ -2783,6 +2806,10 @@ function initClientRfq(): void {
   };
 
   form.addEventListener("input", refreshSummary);
+  form.addEventListener("input", () => {
+    form.querySelectorAll("[aria-invalid='true']").forEach((field) => field.removeAttribute("aria-invalid"));
+    form.querySelectorAll(".validation-message").forEach((message) => message.remove());
+  });
   form.addEventListener("change", (event) => {
     const target = event.target as HTMLElement;
     if (target.matches("[data-time-window-control]")) {
@@ -2828,8 +2855,24 @@ function initClientRfq(): void {
   });
   stepButtons.forEach((button) => button.addEventListener("click", () => {
     const requestedStep = Number(button.dataset.stepButton);
-    if (requestedStep <= currentStep || validateStep(currentStep)) setStep(requestedStep);
+    if (requestedStep <= currentStep) {
+      setStep(requestedStep);
+      return;
+    }
+    for (let step = 0; step < requestedStep; step += 1) {
+      if (!validateStep(step)) {
+        setStep(step);
+        return;
+      }
+    }
+    setStep(requestedStep);
   }));
+  reviewSummary.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const button = target.closest<HTMLButtonElement>("[data-edit-step]");
+    if (!button) return;
+    setStep(Number(button.dataset.editStep));
+  });
   stopsList.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
     if (target.matches("[data-remove-stop]")) {

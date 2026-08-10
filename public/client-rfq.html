@@ -3,49 +3,47 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Client RFQ - Time Trucking Auto-Quote</title>
+    <title>Request Quote - Time Trucking</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body data-page="client">
     <div class="public-shell">
       <header class="public-header">
-        <div class="brand-shell"><div class="brand-logo" aria-hidden="true"><span>TIME</span><span>TRUCKING</span></div><div class="brand-copy"><strong class="brand-title">TIME TRUCKING</strong><span class="brand-subtitle">Secure RFQ</span></div></div>
+        <div class="brand-shell"><div class="brand-logo" aria-hidden="true"><span>TIME</span><span>TRUCKING</span></div><div class="brand-copy"><strong class="brand-title">TIME TRUCKING</strong><span class="brand-subtitle">Secure Request</span></div></div>
       </header>
       <main class="content rfq-public-content">
         <section class="hero">
-          <p class="eyebrow">Transport RFQ</p>
+          <p class="eyebrow">Transport quote</p>
           <h1>Request a transport quote</h1>
           <p class="muted">Send route, load, transport requirements, and customer details for Time Trucking to review and price.</p>
         </section>
         <form class="card rfq-wizard" id="clientRfqForm">
-          <div class="wizard-steps" aria-label="RFQ progress">
-            <button type="button" class="active" data-step-button="0">Where?</button>
-            <button type="button" data-step-button="1">What?</button>
-            <button type="button" data-step-button="2">When?</button>
-            <button type="button" data-step-button="3">Your details</button>
+          <div class="wizard-steps" aria-label="Request progress">
+            <button type="button" class="active" data-step-button="0">Your details</button>
+            <button type="button" data-step-button="1">Where &amp; When</button>
+            <button type="button" data-step-button="2">What</button>
+            <button type="button" data-step-button="3">Review</button>
           </div>
 
           <section class="wizard-panel active" data-step="0">
-            <div class="card-heading"><h2>Where?</h2><span>Collection and delivery</span></div>
-            <div class="stack" id="stopsList"></div>
-            <button type="button" id="addStopButton">+ Add another stop</button>
+            <div class="card-heading"><h2>Your details</h2><span>Who should we contact?</span></div>
+            <div class="grid two">
+              <label>Company name<input name="companyName" required autocomplete="organization" /></label>
+              <label>Contact person<input name="contactPerson" required autocomplete="name" /></label>
+              <label>Email<input name="email" type="email" required autocomplete="email" /></label>
+              <label>Phone<input name="phone" required autocomplete="tel" /></label>
+            </div>
           </section>
 
           <section class="wizard-panel" data-step="1">
-            <div class="card-heading"><h2>What are you moving?</h2><span>Freight and total weight</span></div>
-            <div class="stack" id="cargoItemsList"></div>
-            <button type="button" id="addCargoItemButton" hidden>Add another item</button>
-          </section>
-
-          <section class="wizard-panel" data-step="2">
-            <div class="card-heading"><h2>When?</h2><span>Date and quote-affecting requirements</span></div>
-            <div class="grid two">
-              <label>Preferred collection date<input name="preferredCollectionDate" type="date" /></label>
-              <label>Delivery date optional<input name="deliveryDate" type="date" /></label>
-            </div>
+            <div class="card-heading"><h2>Where &amp; when</h2><span>Collection, delivery, and date</span></div>
+            <div class="stack" id="stopsList"></div>
+            <label>Preferred collection date<input name="preferredCollectionDate" type="date" required /></label>
+            <button type="button" id="addStopButton">+ Add another stop</button>
             <details class="optional-section">
-              <summary>+ Add time window</summary>
+              <summary>+ Add delivery date or time windows</summary>
               <div class="grid two">
+                <label>Delivery date<input name="deliveryDate" type="date" /></label>
                 <label>Collection time window
                   <select name="collectionTimeWindow" data-time-window-control>
                     <option value="">Any time</option>
@@ -70,61 +68,70 @@
                 <label class="specific-time-field" hidden>Delivery specific time<input name="deliverySpecificTime" type="time" /></label>
               </div>
             </details>
-            <div class="quick-toggle-grid">
-              <label class="checkbox"><input name="dangerousGoods" type="checkbox" /> Dangerous goods</label>
-              <label class="checkbox"><input name="crossBorder" type="checkbox" /> Cross-border</label>
-              <label class="checkbox"><input name="repeatLane" type="checkbox" /> Regular/repeat lane</label>
-              <label class="checkbox"><input name="temperatureControlled" type="checkbox" /> Temperature controlled</label>
-            </div>
             <details class="optional-section">
-              <summary>+ Add special requirements</summary>
+              <summary>+ Add loading details</summary>
               <div class="grid two">
-                <label>Loading equipment
+                <label>Loading method
                   <select name="loadingEquipment">
                     <option value="">Not sure / not needed</option>
                     <option value="Forklift">Forklift</option>
                     <option value="Crane">Crane</option>
+                    <option value="Hand loading">Hand loading</option>
+                    <option value="Dock loading">Dock loading</option>
                     <option value="Pallet jack">Pallet jack</option>
                     <option value="Customer equipment">Customer equipment</option>
                     <option value="Driver assistance required">Driver assistance required</option>
                   </select>
                 </label>
-                <label>Offloading equipment
+                <label>Offloading method
                   <select name="offloadingEquipment">
                     <option value="">Not sure / not needed</option>
                     <option value="Forklift">Forklift</option>
                     <option value="Crane">Crane</option>
+                    <option value="Hand loading">Hand loading</option>
+                    <option value="Dock loading">Dock loading</option>
                     <option value="Pallet jack">Pallet jack</option>
                     <option value="Customer equipment">Customer equipment</option>
                     <option value="Driver assistance required">Driver assistance required</option>
                   </select>
                 </label>
+              </div>
+            </details>
+          </section>
+
+          <section class="wizard-panel" data-step="2">
+            <div class="card-heading"><h2>What</h2><span>Freight and total shipment weight</span></div>
+            <div class="stack" id="cargoItemsList"></div>
+            <button type="button" id="addCargoItemButton" hidden>Add another item</button>
+            <details class="optional-section">
+              <summary>+ Add load details</summary>
+              <div class="quick-toggle-grid">
+                <label class="checkbox"><input name="dangerousGoods" type="checkbox" /> Dangerous goods</label>
+                <label class="checkbox"><input name="crossBorder" type="checkbox" /> Cross-border</label>
+                <label class="checkbox"><input name="repeatLane" type="checkbox" /> Regular/repeat lane</label>
+                <label class="checkbox"><input name="temperatureControlled" type="checkbox" /> Temperature controlled</label>
+                <label class="checkbox"><input name="fragile" type="checkbox" /> Fragile / extra handling</label>
+              </div>
+              <div class="grid two">
                 <label>Insurance required<select name="insurance"><option value="no">No</option><option value="yes">Yes</option></select></label>
                 <label>Cargo value<input name="cargoValue" type="number" min="0" step="0.01" /></label>
-                <label class="checkbox"><input name="fragile" type="checkbox" /> Fragile / extra handling</label>
               </div>
               <label>Notes<textarea name="specialRequirements" placeholder="Anything important we should know?"></textarea></label>
               <label>Attachment notes<textarea name="attachmentNote" placeholder="Photos, packing list, drawings, permits, or documents available."></textarea></label>
             </details>
-            <div class="stack" id="dynamicQuestionsList"></div>
+            <div class="stack" id="dynamicQuestionsList" hidden></div>
+            <div class="suggestion" id="suggestionPreview" hidden></div>
           </section>
 
           <section class="wizard-panel" data-step="3">
-            <div class="card-heading"><h2>Customer</h2><span>Quote contact and review</span></div>
-            <div class="grid two">
-              <label>Company name<input name="companyName" required /></label>
-              <label>Contact person<input name="contactPerson" required /></label>
-              <label>Email<input name="email" type="email" required /></label>
-              <label>Phone<input name="phone" required /></label>
-            </div>
-            <div class="suggestion" id="suggestionPreview"></div>
+            <div class="card-heading"><h2>Review</h2><span>Check before requesting your quote</span></div>
             <div class="review-summary" id="rfqReviewSummary"></div>
           </section>
 
           <div class="button-row wizard-actions">
             <button type="button" id="prevStepButton">Back</button>
             <button type="button" id="nextStepButton" class="primary">Continue</button>
-            <button type="button" id="saveDraftButton">Save draft</button>
+            <button type="button" id="saveDraftButton" hidden>Save draft</button>
             <button type="submit" class="primary">REQUEST QUOTE</button>
           </div>
           <p class="rfq-microcopy">Quick request &middot; No obligation &middot; We'll review your details and send your quote.</p>

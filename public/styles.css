@@ -695,6 +695,10 @@ output {
   flex: 0 0 auto;
 }
 
+.weight-per-item-fields[hidden] {
+  display: none;
+}
+
 .quick-toggle-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1978,6 +1982,40 @@ output strong,
   background: #ffffff;
 }
 
+.validation-message {
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.1);
+}
+
+.review-summary-card {
+  display: grid;
+  gap: 8px;
+}
+
+.review-summary-card header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-summary-card p {
+  display: grid;
+  gap: 3px;
+}
+
+.review-summary-card p strong {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
 @media (min-width: 760px) {
   .compact-quote-row {
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1989,6 +2027,10 @@ output strong,
 
   .accepted-load-register {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .wizard-steps {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -2026,5 +2068,21 @@ output strong,
 
   .review-action-card .button-row {
     grid-template-columns: 1fr;
+  }
+
+  .rfq-public-content {
+    padding: 18px 12px 34px;
+  }
+
+  .rfq-wizard {
+    padding: 14px;
+  }
+
+  .wizard-steps {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .wizard-actions {
+    gap: 8px;
   }
 }
