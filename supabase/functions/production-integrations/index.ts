@@ -467,7 +467,7 @@ async function matchOfficialTollPlazas(polyline: string | null): Promise<JsonMap
   }
   const { data, error } = await serviceClient
     .from("toll_plazas")
-    .select("id,plaza_name,road_route,operator_key,latitude,longitude,plaza_type")
+    .select("id,plaza_name,road_route,operator_key,latitude,longitude,plaza_type,direction,route_match_strategy,coordinate_confidence")
     .eq("is_active", true)
     .limit(1000);
   if (error) throw error;
@@ -484,9 +484,10 @@ async function matchOfficialTollPlazas(polyline: string | null): Promise<JsonMap
         bestSegment = index;
       }
     }
-    const thresholdMeters = plaza.plaza_type === "ramp" ? 650 : 1200;
+    const thresholdMeters = plaza.plaza_type === "ramp" ? 180 : 900;
     if (bestDistance <= thresholdMeters) {
       const confidenceRatio = Math.max(0, 1 - (bestDistance / thresholdMeters));
+      if (plaza.plaza_type === "ramp" && confidenceRatio < 0.72) continue;
       matches.push({
         plaza_id: plaza.id,
         plaza_name: plaza.plaza_name,
@@ -498,7 +499,9 @@ async function matchOfficialTollPlazas(polyline: string | null): Promise<JsonMap
         route_segment_index: bestSegment,
         route_order: bestSegment,
         direction: plaza.direction ?? null,
-        match_threshold_m: thresholdMeters
+        match_threshold_m: thresholdMeters,
+        route_match_strategy: plaza.route_match_strategy ?? (plaza.plaza_type === "ramp" ? "strict_ramp_geometry_threshold" : "mainline_geometry_threshold"),
+        coordinate_confidence: plaza.coordinate_confidence ?? "review_required"
       });
     }
   }
@@ -508,7 +511,7 @@ async function matchOfficialTollPlazas(polyline: string | null): Promise<JsonMap
     status: "matched",
     method: "google_overview_polyline_to_official_plaza_coordinates",
     route_point_count: route.length,
-    match_threshold_note: "Mainline plazas use 1200m and ramp plazas use 650m against actual route geometry.",
+    match_threshold_note: "Mainline plazas use 900m against route geometry. Ramp plazas use a strict 180m threshold plus confidence gating so passing mainline traffic does not accidentally trigger ramp tolls.",
     matches: deduped
   };
 }
@@ -910,7 +913,7 @@ async function refreshOfficialTolls(req: Request, body: JsonMap) {
       titlePattern: /toll fees|1\s+March\s+2026|N4/i,
       effectiveDate: "2026-03-01",
       expectedTitle: "TRAC N4 toll fees effective from 1 March 2026",
-      mode: "incomplete"
+      mode: "verified"
     },
     {
       providerKey: "za_n3tc_official_tolls",
@@ -918,7 +921,7 @@ async function refreshOfficialTolls(req: Request, body: JsonMap) {
       titlePattern: /toll tariffs|1\s+March\s+2026|N3/i,
       effectiveDate: "2026-03-01",
       expectedTitle: "N3TC toll fee groups effective from 1 March 2026",
-      mode: "incomplete"
+      mode: "verified"
     }
   ];
 

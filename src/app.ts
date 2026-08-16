@@ -3197,16 +3197,21 @@ function renderEquipmentProfileRow(profile: StandardEquipmentProfileRecord): str
 
 function renderTollProviderStatusRow(row: Record<string, unknown>): string {
   const healthy = row.coverage_status === "complete" && row.scheduler_status !== "needs_attention";
+  const effectivePeriod = `${formatDateOnly(String(row.current_effective_from ?? row.last_publication_effective_date ?? ""))}${row.current_effective_to ? ` to ${formatDateOnly(String(row.current_effective_to))}` : ""}`;
   return `
     <article class="equipment-profile-row">
       <div>
         <strong>${escapeHtml(String(row.provider_name ?? row.provider_key ?? "Toll provider"))}</strong>
-        <span>${escapeHtml(healthy ? "Official toll feed healthy" : "Official toll feed needs attention")}</span>
+        <span>${escapeHtml(healthy ? "Healthy" : "Review required")}</span>
       </div>
       <div class="quote-meta">
         <span>${escapeHtml(humanizeKey(String(row.coverage_status ?? row.provider_status ?? "unknown")))}</span>
         <span>${Number(row.active_plaza_count ?? 0)} active plazas</span>
-        <span>Effective ${escapeHtml(formatDateOnly(String(row.last_publication_effective_date ?? "")))}</span>
+        <span>${Number(row.current_tariff_count ?? 0)} current tariffs</span>
+        <span>Effective ${escapeHtml(effectivePeriod)}</span>
+        <span>Coordinates ${formatNumber(Number(row.coordinate_coverage_percent ?? 0), 0)}%</span>
+        <span>Class mapping ${formatNumber(Number(row.classification_coverage_percent ?? 0), 0)}%</span>
+        <span>${escapeHtml(humanizeKey(String(row.route_matching_readiness ?? "review_required")))}</span>
         <span>Last check ${escapeHtml(formatDateTime(String(row.last_check_at ?? "")))}</span>
       </div>
       <small>${escapeHtml(String(row.coverage_notes ?? row.last_error ?? ""))}</small>
@@ -3227,8 +3232,10 @@ function renderTollCatalogueRow(row: Record<string, unknown>): string {
         <span>Class 3 ${money(Number(row.class_3_rate ?? 0))}</span>
         <span>Class 4 ${money(Number(row.class_4_rate ?? 0))}</span>
         <span>From ${escapeHtml(formatDateOnly(String(row.effective_from ?? "")))}</span>
+        ${row.effective_to ? `<span>Through ${escapeHtml(formatDateOnly(String(row.effective_to)))}</span>` : ""}
+        <span>${escapeHtml(humanizeKey(String(row.coordinate_confidence ?? "review_required")))}</span>
       </div>
-      <small>${row.vat_included ? "VAT included in official tariff" : "VAT treatment requires review"}</small>
+      <small>${row.vat_included ? "VAT included in official tariff" : "VAT treatment requires review"} - ${escapeHtml(String(row.coordinate_source ?? "Coordinate source requires review"))}</small>
     </article>
   `;
 }

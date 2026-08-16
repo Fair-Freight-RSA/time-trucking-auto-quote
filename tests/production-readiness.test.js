@@ -277,6 +277,7 @@ test("official diesel scheduler uses Vault, pg_cron, pg_net, and secure invocati
 
 test("official toll engine models providers, plazas, Class 1-4 tariffs, and VAT-inclusive snapshots", () => {
   const migration = read("supabase/migrations/20260810013000_official_toll_pricing_engine.sql");
+  const repairMigration = read("supabase/migrations/20260810013900_repair_sa_toll_catalogue.sql");
   const edge = read("supabase/functions/production-integrations/index.ts");
   const pricingPage = read("public/pricing-settings.html");
   const app = read("src/app.ts");
@@ -328,10 +329,41 @@ test("official toll engine models providers, plazas, Class 1-4 tariffs, and VAT-
   assert.ok(pricingPage.includes("Toll tariff source status"), "Pricing page should show toll provider status");
   assert.ok(pricingPage.includes("Toll plaza catalogue"), "Pricing page should show toll plaza catalogue");
   assert.ok(pricingPage.includes("Equipment toll classes") || app.includes("Toll class requires confirmation"), "Pricing UI should expose equipment toll class state");
+  assert.ok(app.includes("current_tariff_count"), "Pricing UI should show current tariff counts, not only provider labels");
+  assert.ok(app.includes("coordinate_coverage_percent"), "Pricing UI should show coordinate coverage");
+  assert.ok(app.includes("classification_coverage_percent"), "Pricing UI should show classification coverage");
   assert.ok(app.includes("Toll calculation"), "Quote Review should show toll calculation details");
   assert.ok(app.includes("Detected plazas"), "Quote Review should show detected plaza count");
   assert.ok(client.includes("ttaq_toll_provider_status"), "Pricing loader should fetch toll provider health from DB");
   assert.ok(client.includes("ttaq_current_toll_catalogue"), "Pricing loader should fetch active toll catalogue from DB");
+
+  for (const expected of [
+    "ttaq_refresh_toll_provider_coverage",
+    "Complete cannot coexist with zero active plazas",
+    "N3TC Toll Fee Groups effective from 1 March 2026",
+    "TRAC N4 toll plazas and toll fees effective from 1 March 2026",
+    "n3tc-n3-de-hoek-mainline",
+    "n3tc-n3-wilge-mainline",
+    "n3tc-n3-tugela-mainline",
+    "n3tc-n3-mooi-mainline",
+    "trac-n4-diamond-hill-mainline",
+    "trac-n4-middelburg-mainline",
+    "trac-n4-machado-mainline",
+    "trac-n4-nkomazi-mainline",
+    "current_tariff_count",
+    "coordinate_coverage_percent",
+    "classification_coverage_percent",
+    "route_matching_readiness",
+    "verified_route_geometry",
+    "strict_ramp_geometry_threshold"
+  ]) {
+    assert.ok(repairMigration.includes(expected), `toll repair migration should include ${expected}`);
+  }
+  assert.equal(repairMigration.includes("delete from public.toll_tariffs"), false, "toll repair must not delete historical tariffs");
+  assert.equal(repairMigration.includes("truncate"), false, "toll repair must not truncate toll history");
+  assert.ok(edge.includes("plaza.plaza_type === \"ramp\" ? 180 : 900"), "ramp matching should be stricter than mainline matching");
+  assert.ok(edge.includes("confidenceRatio < 0.72"), "ramp matches should require high confidence to avoid accidental ramp tolls");
+  assert.ok(edge.includes("mode: \"verified\""), "scheduled refresh should keep populated TRAC/N3TC coverage verified instead of reverting to partial");
 
   for (const browserFile of ["src/app.ts", "src/supabaseClient.ts", "public/pricing-settings.html"]) {
     assert.equal(read(browserFile).includes("ttaq_diesel_refresh_secret"), false, `${browserFile} must not expose Vault secret names`);
@@ -344,7 +376,7 @@ test("toll route matching guards nearby false positives, duplicate plazas, toll-
   const hardening = read("supabase/migrations/20260810013200_authoritative_toll_coverage_hardening.sql");
   const edge = read("supabase/functions/production-integrations/index.ts");
 
-  assert.ok(edge.includes("plaza.plaza_type === \"ramp\" ? 650 : 1200"), "ramp and mainline plazas should use route-geometry thresholds");
+  assert.ok(edge.includes("plaza.plaza_type === \"ramp\" ? 180 : 900"), "ramp and mainline plazas should use strict route-geometry thresholds");
   assert.ok(edge.includes("distanceToSegmentMeters(point, route[index], route[index + 1])"), "plaza matching should use actual route geometry");
   assert.ok(edge.includes("[...new Map(matches.map"), "duplicate plaza matches should be prevented");
   assert.ok(edge.includes("match_confidence"), "matched plazas should include confidence metadata");
