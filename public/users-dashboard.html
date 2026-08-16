@@ -29,10 +29,10 @@
         </section>
         <section class="grid two">
           <form class="card" id="inviteUserForm">
-            <div class="card-heading"><h2>Add or update internal user</h2><span>Requires an existing secure login user</span></div>
-            <label>Login user ID<input name="authUserId" required placeholder="User UUID" /></label>
+            <div class="card-heading"><h2>Invite User</h2><span>No Supabase dashboard or UUID required</span></div>
             <label>Full name<input name="fullName" required /></label>
             <label>Email<input name="email" type="email" required /></label>
+            <label>Phone (optional)<input name="phone" type="tel" /></label>
             <label>Role
               <select name="role">
                 <option value="viewer">Viewer</option>
@@ -49,16 +49,17 @@
               <label class="checkbox"><input name="canManagePricingRules" type="checkbox" /> Manage pricing rules</label>
               <label class="checkbox"><input name="canManageUsers" type="checkbox" /> Manage users</label>
             </div>
-            <button class="primary" type="submit">Save internal access</button>
+            <button class="primary" type="submit">Send invitation</button>
             <output id="usersOutput"></output>
           </form>
           <div class="card">
-            <div class="card-heading"><h2>Access rules</h2><span>Security plan</span></div>
+            <div class="card-heading"><h2>Access rules</h2><span>Server enforced</span></div>
             <div class="detail-grid">
               <p><strong>Owner</strong><span>Full access, can manage users, approve quotes, and adjust pricing.</span></p>
               <p><strong>Manager</strong><span>Can manage RFQs and approve quotes, but cannot remove an owner.</span></p>
               <p><strong>Staff</strong><span>Assigned/internal quote access only when allowed, no approval by default.</span></p>
               <p><strong>Viewer</strong><span>Read-only internal access.</span></p>
+              <p><strong>Invitation flow</strong><span>The backend creates the secure login and links the generated Auth user automatically.</span></p>
             </div>
           </div>
         </section>

@@ -109,6 +109,40 @@ small {
   background: rgba(15, 118, 110, 0.28);
 }
 
+.pricing-tabs,
+.help-topic-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pricing-tabs {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.pricing-tabs button,
+.filter-chip {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 9px 11px;
+}
+
+.pricing-tabs button.active,
+.filter-chip.active {
+  background: #e6fffb;
+  border-color: var(--accent);
+  color: var(--accent-dark);
+  font-weight: 800;
+}
+
+[hidden] {
+  display: none !important;
+}
+
 .content {
   width: min(1120px, 100%);
   margin: 0 auto;

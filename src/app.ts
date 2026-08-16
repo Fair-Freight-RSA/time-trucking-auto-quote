@@ -13,6 +13,7 @@ import {
   getPublicQuotePdfUrl,
   hasSupabaseSession,
   isSupabaseConfigured,
+  inviteInternalUser,
   listStandardEquipmentProfiles,
   listInternalUsers,
   loadCurrentInternalUser,
@@ -20,6 +21,7 @@ import {
   loadAdminQuoteRequests,
   loadCustomerPortal,
   loadInternalQuoteDocument,
+  loadOperationalJourneySummary,
   loadPricingSettings,
   loadPublicQuoteDocument,
   loadPublicQuoteResponse,
@@ -31,16 +33,18 @@ import {
   reactivateInternalUser,
   revokeInternalUser,
   refreshOfficialDieselPrice,
+  saveDefaultOperatingDepot,
   saveCommercialRateCard,
   saveCommercialPricingSettings,
+  saveVehicleClassInternalCostProfile,
   savePricingSettings,
-  saveInternalUser,
   sendQuoteEmail,
   signInInternalUser,
   signOutInternalUser,
   submitPublicQuoteDecision,
   submitPublicRfq,
   updateAdminQuote,
+  updateQuoteReturnLoadStatus,
   updateInternalSettings,
   updateRouteEstimateGoogle,
   updateRouteEstimateManual
@@ -76,7 +80,11 @@ import type {
   VehicleRecommendationRecord,
   SystemSettingRecord,
   EmailTemplatePlaceholderRecord,
-  NumberingSequenceSettingRecord
+  NumberingSequenceSettingRecord,
+  OperationalJourneyLegRecord,
+  OperationalJourneySummaryRecord,
+  VehicleClassInternalCostComponentRecord,
+  VehicleClassInternalCostProfileRecord
 } from "./types";
 
 const storageKey = "time-trucking-auto-quote-batch-1";
@@ -131,7 +139,7 @@ function getRequest(id: string | null): QuoteRequest | undefined {
 }
 
 function isInternalPage(): boolean {
-  return ["dashboard", "create", "review", "users", "pricing", "admin-settings", "customers", "accepted-loads"].includes(document.body.dataset.page ?? "");
+  return ["dashboard", "create", "review", "users", "pricing", "admin-settings", "customers", "accepted-loads", "help"].includes(document.body.dataset.page ?? "");
 }
 
 function isLoginPage(): boolean {
@@ -357,6 +365,9 @@ function requestFromRecord(record: QuoteRequestRecord): QuoteRequest {
     pricingComponentOverrides: pricingComponentOverridesFromRecord(record),
     quoteDocuments: quoteDocumentsFromRecord(record),
     transportJob: transportJobFromRecord(record),
+    returnLoadStatus: record.return_load_status ?? "none",
+    returnLoadPricingStatus: record.return_load_pricing_status ?? "review_required",
+    returnLoadNotes: record.return_load_notes ?? "",
     createdAt: record.created_at
   };
 }
@@ -900,6 +911,66 @@ function renderRouteIntelligenceCard(request: QuoteRequest): string {
       </div>
       <p class="muted">${escapeHtml(estimate?.route_notes ?? "Route distance and duration feed the pricing engine.")}</p>
       ${estimate?.provider_error ? `<p class="muted"><strong>Provider note:</strong> ${escapeHtml(estimate.provider_error)}</p>` : ""}
+    </section>
+  `;
+}
+
+function renderOperationalJourneyCard(request: QuoteRequest): string {
+  const journey = request.operationalJourney as OperationalJourneySummaryRecord | null | undefined;
+  const legs = journey?.legs ?? [];
+  const fallbackLegs: OperationalJourneyLegRecord[] = [
+    { leg_key: "positioning_outbound", leg_label: "Leg A - Positioning / empty outbound", origin_address: journey?.depot_address ?? "Default depot not configured", destination_address: request.collectionAddress, load_status: "empty", review_status: "review_required", review_reason: "Depot-to-pickup route requires depot and route evidence." },
+    { leg_key: "loaded_delivery", leg_label: "Leg B - Loaded delivery", origin_address: request.collectionAddress, destination_address: request.deliveryAddress, load_status: "loaded", review_status: request.routeEstimate ? "pending" : "review_required", review_reason: "Loaded route uses the quote route estimate where available." },
+    { leg_key: "return_to_depot", leg_label: "Leg C - Return to depot", origin_address: request.deliveryAddress, destination_address: journey?.depot_address ?? "Default depot not configured", load_status: request.returnLoadStatus === "available" ? "backload" : "empty", review_status: "review_required", review_reason: "Return journey remains part of job economics; commercial treatment requires Henning rule." }
+  ];
+  const visibleLegs = legs.length ? legs : fallbackLegs;
+  const returnStatus = journey?.return_load_status ?? request.returnLoadStatus ?? "none";
+  const returnLabel = returnStatus === "available"
+    ? "Return load available"
+    : returnStatus === "unknown_review_required"
+      ? "Unknown / requires review"
+      : "No return load available";
+  return `
+    <section class="summary-block operational-journey-card">
+      <div class="card-heading">
+        <h2>Operational Journey</h2>
+        <span>${escapeHtml(humanizeKey(journey?.operational_review_status ?? "review_required"))}</span>
+      </div>
+      <div class="grid three">
+        <p><strong>Depot</strong><span>${escapeHtml(journey?.depot_name ?? "Default operating depot not configured")}</span></p>
+        <p><strong>Total operational km</strong><span>${journey?.total_operational_km ? formatDistanceKm(journey.total_operational_km) : "Review required"}</span></p>
+        <p><strong>Commercial distance basis</strong><span>${escapeHtml(humanizeKey(journey?.commercial_billable_distance_basis ?? "pending_henning_confirmation"))}</span></p>
+        <p><strong>Return load</strong><span>${escapeHtml(returnLabel)}</span></p>
+        <p><strong>Backload pricing</strong><span>${escapeHtml(humanizeKey(journey?.return_load_pricing_status ?? request.returnLoadPricingStatus ?? "review_required"))}</span></p>
+        <p><strong>Commercial treatment</strong><span>Review required until Henning confirms rule</span></p>
+      </div>
+      <div class="journey-leg-list">
+        ${visibleLegs.map((leg) => `
+          <article class="nested-card compact-leg-card">
+            <strong>${escapeHtml(String(leg.leg_label ?? leg.leg_key))}</strong>
+            <span>${escapeHtml(String(leg.origin_address ?? "Origin pending"))} -> ${escapeHtml(String(leg.destination_address ?? "Destination pending"))}</span>
+            <small>${escapeHtml(humanizeKey(String(leg.load_status ?? "unknown")))} | ${leg.distance_km ? formatDistanceKm(Number(leg.distance_km)) : "distance review required"} | ${escapeHtml(humanizeKey(String(leg.review_status ?? "review_required")))}</small>
+          </article>
+        `).join("")}
+      </div>
+      <div class="grid two">
+        <label>Return load / backload
+          <select name="returnLoadStatus">
+            <option value="none"${returnStatus === "none" ? " selected" : ""}>No return load available</option>
+            <option value="available"${returnStatus === "available" ? " selected" : ""}>Return load available</option>
+            <option value="unknown_review_required"${returnStatus === "unknown_review_required" ? " selected" : ""}>Unknown / requires review</option>
+          </select>
+        </label>
+        <label>Return-load note
+          <input name="returnLoadNotes" value="${escapeHtml(request.returnLoadNotes ?? "")}" placeholder="Optional internal note" />
+        </label>
+      </div>
+      <button class="button small" type="button" id="saveReturnLoadButton">Save return-load status</button>
+      <details class="detail-disclosure">
+        <summary>Journey audit details</summary>
+        <p class="muted">${escapeHtml(journey?.commercial_treatment ?? "Operational journey is separate from commercial billable distance until Henning confirms day-vs-km and return-trip rules.")}</p>
+        <p class="muted">${escapeHtml(journey?.operational_review_notes ?? "Depot, positioning leg, return leg, tolls and route-risk evidence remain review-required until configured/calculated.")}</p>
+      </details>
     </section>
   `;
 }
@@ -1460,6 +1531,18 @@ function renderPricingAuditView(request: QuoteRequest, calculation: PricingCalcu
   const commercialLines = breakdowns.filter((line) => commercialLineKeys.has(line.line_key));
   const tripChargeLines = breakdowns.filter((line) => tripChargeLineKeys.has(line.line_key));
   const internalCostLines = breakdowns.filter((line) => line.line_key.startsWith("internal_"));
+  const internalCostAnalysis = sourceSnapshot.internal_cost_analysis as Record<string, unknown> | undefined;
+  const internalCostStatus = String(dynamicOutputs.internal_cost_analysis_status ?? internalCostAnalysis?.status ?? "legacy");
+  const internalMissingComponents = Array.isArray(dynamicOutputs.internal_cost_missing_components)
+    ? dynamicOutputs.internal_cost_missing_components.map(String)
+    : Array.isArray(internalCostAnalysis?.missing_components)
+      ? internalCostAnalysis.missing_components.map(String)
+      : [];
+  const renderInternalCostMetric = (key: string): string => {
+    if (internalCostStatus === "incomplete") return "Incomplete";
+    if (dynamicOutputs[key] === null || dynamicOutputs[key] === undefined) return "Not available";
+    return money(numeric(dynamicOutputs[key]), calculation.currency);
+  };
   const renderBreakdownTable = (lines: PricingBreakdownRecord[], emptyLabel: string) => lines.length
     ? `<div class="table-wrap"><table><thead><tr><th>Line</th><th>Input</th><th>Multiplier/rate</th><th>Formula/source</th><th>Result</th></tr></thead><tbody>${lines.map((line) => `<tr><td>${escapeHtml(line.line_label)}</td><td>${formatNumber(line.quantity, 4)}</td><td>${money(line.unit_rate, calculation.currency)}</td><td>${escapeHtml(line.explanation ?? "No explanation captured")}</td><td>${money(line.amount, calculation.currency)}</td></tr>`).join("")}</tbody></table></div>`
     : `<p class="muted">${escapeHtml(emptyLabel)}</p>`;
@@ -1523,9 +1606,10 @@ function renderPricingAuditView(request: QuoteRequest, calculation: PricingCalcu
         <h3>D. Profitability Analysis</h3>
         <div class="grid three">
           <p><strong>Commercial subtotal</strong><span>${money(calculation.subtotal, calculation.currency)}</span></p>
-          <p><strong>Estimated internal cost</strong><span>${money(numeric(dynamicOutputs.estimated_internal_operating_cost), calculation.currency)}</span></p>
-          <p><strong>Estimated contribution</strong><span>${money(numeric(dynamicOutputs.estimated_contribution_before_vat), calculation.currency)}</span></p>
+          <p><strong>Estimated internal cost</strong><span>${renderInternalCostMetric("estimated_internal_operating_cost")}</span></p>
+          <p><strong>Estimated contribution</strong><span>${renderInternalCostMetric("estimated_contribution_before_vat")}</span></p>
         </div>
+        ${internalCostStatus === "incomplete" ? `<p class="muted">Internal cost/contribution analysis is incomplete because required vehicle-class inputs are missing: ${escapeHtml(internalMissingComponents.join(", ") || "Requires Time Trucking input")}.</p>` : ""}
       </div>
       <div class="summary-block">
         <h3>F. Warnings / Pending Rules</h3>
@@ -1907,19 +1991,39 @@ function renderAdminSettings(settings: InternalSettingsPayload): string {
       </div>
 
       <section>
-        <div class="card-heading"><h2>Company branding</h2><span>Customer-facing settings</span></div>
+        <div class="card-heading"><h2>Company identity</h2><span>Customer-facing legal and quote details</span></div>
         <div class="grid three">
           <label>Company name<input name="company_name" value="${escapeHtml(value("company_name"))}" ${canUpdate ? "" : "disabled"} /></label>
           <label>Trading name<input name="trading_name" value="${escapeHtml(value("trading_name"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>Registered legal name<input name="legal_name" value="${escapeHtml(value("legal_name"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>VAT number<input name="vat_number" value="${escapeHtml(value("vat_number"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>Company registration number<input name="registration_number" value="${escapeHtml(value("registration_number"))}" ${canUpdate ? "" : "disabled"} /></label>
           <label>Website URL<input name="website_url" value="${escapeHtml(value("website_url"))}" ${canUpdate ? "" : "disabled"} /></label>
           <label>Logo URL<input name="logo_url" value="${escapeHtml(value("logo_url"))}" ${canUpdate ? "" : "disabled"} /></label>
           <label>Primary color<input name="primary_color" value="${escapeHtml(value("primary_color"))}" ${canUpdate ? "" : "disabled"} /></label>
           <label>Accent color<input name="accent_color" value="${escapeHtml(value("accent_color"))}" ${canUpdate ? "" : "disabled"} /></label>
           <label>Contact email<input name="contact_email" value="${escapeHtml(value("contact_email"))}" ${canUpdate ? "" : "disabled"} /></label>
           <label>Contact phone<input name="contact_phone" value="${escapeHtml(value("contact_phone"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>Quote contact name<input name="quote_contact_name" value="${escapeHtml(value("quote_contact_name"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>Quote contact email<input name="quote_contact_email" value="${escapeHtml(value("quote_contact_email"))}" ${canUpdate ? "" : "disabled"} /></label>
           <label>Address<input name="address" value="${escapeHtml(value("address"))}" ${canUpdate ? "" : "disabled"} /></label>
         </div>
         <label>Quote footer<textarea name="quote_footer" rows="4" ${canUpdate ? "" : "disabled"}>${escapeHtml(value("quote_footer"))}</textarea></label>
+      </section>
+
+      <section>
+        <div class="card-heading"><h2>Default operating depot</h2><span>Depot to pickup to delivery to depot model</span></div>
+        <div class="notice">
+          <strong>Operational route basis</strong>
+          <span>The depot is used for operational journey review. Customer billing still uses the approved commercial rate-card rules until Henning confirms return-trip/backload treatment.</span>
+        </div>
+        <div class="grid three">
+          <label>Depot display name<input name="depot_display_name" value="${escapeHtml(value("depot_display_name"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>Depot address<input name="depot_address" value="${escapeHtml(value("depot_address"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>Google Place ID<input name="depot_place_id" value="${escapeHtml(value("depot_place_id"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>Latitude<input name="depot_latitude" inputmode="decimal" value="${escapeHtml(value("depot_latitude"))}" ${canUpdate ? "" : "disabled"} /></label>
+          <label>Longitude<input name="depot_longitude" inputmode="decimal" value="${escapeHtml(value("depot_longitude"))}" ${canUpdate ? "" : "disabled"} /></label>
+        </div>
       </section>
 
       <section>
@@ -2224,6 +2328,10 @@ function formatDateOnly(value: string | null | undefined): string {
 
 function renderShellActiveNav(): void {
   const page = document.body.dataset.page;
+  const nav = document.querySelector<HTMLElement>(".nav");
+  if (nav && isInternalPage() && !nav.querySelector('[data-nav="help"]')) {
+    nav.insertAdjacentHTML("beforeend", `<a data-nav="help" href="./help.html">Help</a>`);
+  }
   document.querySelectorAll<HTMLAnchorElement>("[data-nav]").forEach((link) => {
     link.classList.toggle("active", link.dataset.nav === page);
   });
@@ -2628,13 +2736,23 @@ function buildSettingsPayloadFromForm(form: HTMLFormElement, current: InternalSe
       ...current.company_branding,
       company_name: value("company_name"),
       trading_name: value("trading_name"),
+      legal_name: value("legal_name"),
+      vat_number: value("vat_number"),
+      registration_number: value("registration_number"),
       website_url: value("website_url"),
       logo_url: value("logo_url"),
       primary_color: value("primary_color"),
       accent_color: value("accent_color"),
       contact_email: value("contact_email"),
       contact_phone: value("contact_phone"),
+      quote_contact_name: value("quote_contact_name"),
+      quote_contact_email: value("quote_contact_email"),
       address: value("address"),
+      depot_display_name: value("depot_display_name"),
+      depot_address: value("depot_address"),
+      depot_place_id: value("depot_place_id"),
+      depot_latitude: value("depot_latitude"),
+      depot_longitude: value("depot_longitude"),
       quote_footer: value("quote_footer")
     },
     system_settings: current.system_settings.map((setting, index) => ({
@@ -2691,6 +2809,17 @@ async function initAdminSettings(): Promise<void> {
       event.preventDefault();
       try {
         const payload = buildSettingsPayloadFromForm(form, settings);
+        const depotName = String(payload.company_branding.depot_display_name ?? "").trim();
+        const depotAddress = String(payload.company_branding.depot_address ?? "").trim();
+        if (depotName || depotAddress) {
+          await saveDefaultOperatingDepot({
+            displayName: depotName,
+            fullAddress: depotAddress,
+            googlePlaceId: String(payload.company_branding.depot_place_id ?? "").trim(),
+            latitude: String(payload.company_branding.depot_latitude ?? "").trim() ? Number(payload.company_branding.depot_latitude) : null,
+            longitude: String(payload.company_branding.depot_longitude ?? "").trim() ? Number(payload.company_branding.depot_longitude) : null
+          });
+        }
         const updated = await updateInternalSettings(payload);
         content.innerHTML = renderAdminSettings(updated);
       } catch (error) {
@@ -2741,7 +2870,7 @@ async function initUsersDashboard(): Promise<void> {
           ${canManage && user.user_status === "revoked" ? `<button class="small" type="button" data-reactivate-user="${escapeHtml(user.id)}">Reactivate</button>` : ""}
         </div>
       </article>
-    `).join("") : `<div class="empty-state"><strong>No internal users visible</strong><span>Create a secure login user first, then add the matching user ID here.</span></div>`;
+    `).join("") : `<div class="empty-state"><strong>No internal users visible</strong><span>Invite your first Time Trucking staff member. The backend will create and link the secure login automatically.</span></div>`;
 
     list.querySelectorAll<HTMLButtonElement>("[data-revoke-user]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -2777,7 +2906,6 @@ async function initUsersDashboard(): Promise<void> {
     event.preventDefault();
     const data = new FormData(form);
     const role = formValue(data, "role") as InternalRole;
-    const authUserId = formValue(data, "authUserId");
     const roleDefaults = {
       canViewAllQuotes: ["owner", "manager", "viewer"].includes(role),
       canManageRfqs: ["owner", "manager"].includes(role),
@@ -2786,28 +2914,26 @@ async function initUsersDashboard(): Promise<void> {
       canManagePricingRules: role === "owner",
       canManageUsers: role === "owner"
     };
-    if (!authUserId) {
-      output.innerHTML = `<strong>Login user ID required.</strong><span>Create the secure login user first, then paste the matching user UUID here.</span>`;
-      return;
-    }
     try {
-      await saveInternalUser({
-        id: authUserId,
+      const result = await inviteInternalUser({
         fullName: formValue(data, "fullName"),
         email: formValue(data, "email"),
+        phone: formValue(data, "phone"),
         role,
-        canViewAllQuotes: roleDefaults.canViewAllQuotes || Boolean(data.get("canViewAllQuotes")),
-        canManageRfqs: roleDefaults.canManageRfqs || Boolean(data.get("canManageRfqs")),
-        canApproveQuotes: roleDefaults.canApproveQuotes || Boolean(data.get("canApproveQuotes")),
-        canAdjustPricing: roleDefaults.canAdjustPricing || Boolean(data.get("canAdjustPricing")),
-        canManagePricingRules: roleDefaults.canManagePricingRules || Boolean(data.get("canManagePricingRules")),
-        canManageUsers: roleDefaults.canManageUsers || Boolean(data.get("canManageUsers"))
+        permissions: {
+          can_view_all_quotes: roleDefaults.canViewAllQuotes || Boolean(data.get("canViewAllQuotes")),
+          can_manage_rfqs: roleDefaults.canManageRfqs || Boolean(data.get("canManageRfqs")),
+          can_approve_quotes: roleDefaults.canApproveQuotes || Boolean(data.get("canApproveQuotes")),
+          can_adjust_pricing: roleDefaults.canAdjustPricing || Boolean(data.get("canAdjustPricing")),
+          can_manage_pricing_rules: roleDefaults.canManagePricingRules || Boolean(data.get("canManagePricingRules")),
+          can_manage_users: roleDefaults.canManageUsers || Boolean(data.get("canManageUsers"))
+        }
       });
-      output.innerHTML = `<strong>User access saved.</strong><span>The portal access record now matches the secure login user.</span>`;
+      output.innerHTML = `<strong>Invitation sent.</strong><span>${escapeHtml(result.message ?? "The secure login and portal access record were linked automatically.")}</span>`;
       form.reset();
       await render();
     } catch (error) {
-      output.innerHTML = `<strong>User access not saved.</strong><span>${escapeHtml(friendlyError(error, "Confirm the Auth user ID exists and your role can manage users."))}</span>`;
+      output.innerHTML = `<strong>Invitation failed.</strong><span>${escapeHtml(friendlyError(error, "We could not invite this user. Please check the email and your user-management permissions."))}</span>`;
     }
   });
 
@@ -2935,6 +3061,116 @@ function collectCommercialRateCardEdits(form: HTMLFormElement, existingRows: Com
   return [...byId.values()];
 }
 
+function componentByKey(profile: VehicleClassInternalCostProfileRecord, key: string): VehicleClassInternalCostComponentRecord | undefined {
+  return (profile.components ?? []).find((component) => component.component_key === key);
+}
+
+function formatInternalCostValue(component: VehicleClassInternalCostComponentRecord | undefined): string {
+  if (!component || component.amount === null || component.amount === undefined || component.value_status === "not_configured") return "Not configured";
+  const amount = Number(component.amount);
+  if (component.unit_code === "L/100km") return `${formatNumber(amount, 4)} L/100km`;
+  if (component.unit_code === "R/km") return `${money(amount)}/km`;
+  if (component.unit_code === "R/hour") return `${money(amount)}/hour`;
+  if (component.unit_code === "R/night") return `${money(amount)}/night`;
+  return formatNumber(amount, 4);
+}
+
+function renderInternalCostComponentInput(profile: VehicleClassInternalCostProfileRecord, componentKey: string, label: string): string {
+  const component = componentByKey(profile, componentKey);
+  const amount = component?.amount === null || component?.amount === undefined ? "" : String(component.amount);
+  return `
+    <label>${escapeHtml(label)}
+      <input data-cost-profile="${escapeHtml(profile.vehicle_class_key)}" data-cost-component="${escapeHtml(componentKey)}" data-cost-field="amount" type="number" min="0" step="0.0001" value="${escapeHtml(amount)}" placeholder="Not configured" />
+      <small>${escapeHtml(component?.source_basis ?? "Requires Time Trucking input")}</small>
+    </label>
+  `;
+}
+
+function renderVehicleClassInternalCostProfiles(rows: VehicleClassInternalCostProfileRecord[]): string {
+  if (!rows.length) return `<p class="muted">Vehicle-class internal cost profiles are not visible to this session.</p>`;
+  const order = Object.keys(commercialCategoryLabels);
+  const ordered = [...rows].sort((left, right) => {
+    const leftIndex = order.indexOf(left.vehicle_class_key);
+    const rightIndex = order.indexOf(right.vehicle_class_key);
+    return (leftIndex >= 0 ? leftIndex : 99) - (rightIndex >= 0 ? rightIndex : 99);
+  });
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Vehicle</th><th>Fuel L/100km</th><th>Tyres R/km</th><th>Maintenance R/km</th><th>Insurance R/km</th><th>Depreciation R/km</th><th>Overhead R/km</th><th>Driver</th><th>Status</th></tr></thead>
+        <tbody>
+          ${ordered.map((profile) => {
+            const missing = profile.missing_required_components ?? [];
+            return `<tr>
+              <td><strong>${escapeHtml(profile.display_name)}</strong></td>
+              <td>${escapeHtml(formatInternalCostValue(componentByKey(profile, "fuel_consumption_l_per_100km")))}</td>
+              <td>${escapeHtml(formatInternalCostValue(componentByKey(profile, "tyres_per_km")))}</td>
+              <td>${escapeHtml(formatInternalCostValue(componentByKey(profile, "maintenance_per_km")))}</td>
+              <td>${escapeHtml(formatInternalCostValue(componentByKey(profile, "insurance_per_km")))}</td>
+              <td>${escapeHtml(formatInternalCostValue(componentByKey(profile, "depreciation_per_km")))}</td>
+              <td>${escapeHtml(formatInternalCostValue(componentByKey(profile, "vehicle_overhead_per_km")))}</td>
+              <td>${escapeHtml(formatInternalCostValue(componentByKey(profile, "driver_hourly_cost")))}</td>
+              <td>${renderStatusBadge(missing.length ? "review" : "confirmed", missing.length ? "Requires input" : "Configured")}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+    <div class="vehicle-cost-editors">
+      ${ordered.map((profile) => {
+        const missing = profile.missing_required_components ?? [];
+        return `<details class="detail-disclosure vehicle-cost-editor" data-cost-profile-editor="${escapeHtml(profile.vehicle_class_key)}">
+          <summary>${escapeHtml(profile.display_name)} operating-cost profile - ${escapeHtml(missing.length ? "requires Time Trucking input" : "configured")}</summary>
+          <div class="grid two">
+            <label>Vehicle class<input data-cost-profile="${escapeHtml(profile.vehicle_class_key)}" data-cost-field="display_name" value="${escapeHtml(profile.display_name)}" /></label>
+            <label>Status<select data-cost-profile="${escapeHtml(profile.vehicle_class_key)}" data-cost-field="profile_status">
+              ${["requires_input", "partial", "estimated", "confirmed"].map((status) => `<option value="${status}"${profile.profile_status === status ? " selected" : ""}>${escapeHtml(humanizeKey(status))}</option>`).join("")}
+            </select></label>
+            <div class="subsection-heading"><h3>Fuel</h3></div>
+            ${renderInternalCostComponentInput(profile, "fuel_consumption_l_per_100km", "Fuel consumption L/100km")}
+            <div class="subsection-heading"><h3>Distance-based operating costs</h3></div>
+            ${renderInternalCostComponentInput(profile, "tyres_per_km", "Tyres R/km")}
+            ${renderInternalCostComponentInput(profile, "maintenance_per_km", "Maintenance R/km")}
+            ${renderInternalCostComponentInput(profile, "insurance_per_km", "Insurance R/km")}
+            ${renderInternalCostComponentInput(profile, "depreciation_per_km", "Depreciation R/km")}
+            ${renderInternalCostComponentInput(profile, "vehicle_overhead_per_km", "Vehicle overhead R/km")}
+            <div class="subsection-heading"><h3>Driver</h3></div>
+            ${renderInternalCostComponentInput(profile, "driver_hourly_cost", "Driver hourly cost")}
+            ${renderInternalCostComponentInput(profile, "night_out_allowance", "Night-out allowance")}
+            <div class="subsection-heading"><h3>Administration</h3></div>
+            <label>Effective from<input data-cost-profile="${escapeHtml(profile.vehicle_class_key)}" data-cost-field="effective_from" type="date" value="${escapeHtml(formatDateOnly(profile.effective_from))}" /></label>
+            <label>Source / basis<input data-cost-profile="${escapeHtml(profile.vehicle_class_key)}" data-cost-field="source_basis" value="${escapeHtml(profile.source_basis ?? "")}" /></label>
+            <label>Notes<input data-cost-profile="${escapeHtml(profile.vehicle_class_key)}" data-cost-field="notes" value="${escapeHtml(profile.notes ?? "")}" /></label>
+            <label>Last updated<input value="${escapeHtml(formatDateTime(profile.updated_at))}" readonly /></label>
+          </div>
+          ${missing.length ? `<p class="muted">Missing: ${escapeHtml(missing.join(", "))}</p>` : `<p class="muted">All required internal operating-cost inputs are configured for contribution analysis.</p>`}
+        </details>`;
+      }).join("")}
+    </div>
+    <p class="muted">Blank means Not configured, not R0. R1,750 night-out allowance is inherited from the Time Trucking company default unless a vehicle-specific override is entered.</p>
+  `;
+}
+
+function collectVehicleClassInternalCostProfiles(form: HTMLFormElement, rows: VehicleClassInternalCostProfileRecord[]): VehicleClassInternalCostProfileRecord[] {
+  const byKey = new Map(rows.map((row) => [row.vehicle_class_key, { ...row, components: (row.components ?? []).map((component) => ({ ...component })) }]));
+  form.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-cost-profile][data-cost-field]").forEach((input) => {
+    const profile = byKey.get(input.dataset.costProfile ?? "");
+    if (!profile) return;
+    const field = input.dataset.costField as keyof VehicleClassInternalCostProfileRecord;
+    (profile as Record<string, unknown>)[field] = input.value;
+  });
+  form.querySelectorAll<HTMLInputElement>("[data-cost-profile][data-cost-component][data-cost-field='amount']").forEach((input) => {
+    const profile = byKey.get(input.dataset.costProfile ?? "");
+    const component = profile?.components.find((candidate) => candidate.component_key === input.dataset.costComponent);
+    if (!component) return;
+    const raw = input.value.trim();
+    component.amount = raw === "" ? null : Number(raw);
+    component.value_status = raw === "" ? "not_configured" : (component.component_key === "night_out_allowance" && Number(raw) === 1750 ? "inherited" : "manual_configured");
+    component.source_type = raw === "" ? "requires_time_trucking_input" : (component.component_key === "night_out_allowance" && Number(raw) === 1750 ? "company_default" : "vehicle_class_specific");
+  });
+  return [...byKey.values()];
+}
+
 function renderPricingDataSources(settings: Record<string, unknown>): string {
   const dieselHealthy = String(settings.diesel_feed_health ?? "").includes("healthy");
   const tollHealthy = String(settings.toll_feed_health ?? "").includes("healthy");
@@ -2960,9 +3196,20 @@ function initPricingSettings(): void {
   const form = document.querySelector<HTMLFormElement>("#pricingSettingsForm");
   const output = document.querySelector<HTMLElement>("#pricingSettingsOutput");
   if (!form || !output) return;
+  const tabButtons = Array.from(form.querySelectorAll<HTMLButtonElement>("[data-pricing-tab-button]"));
+  const tabPanels = Array.from(form.querySelectorAll<HTMLElement>("[data-pricing-tab]"));
+  const activatePricingTab = (tab: string): void => {
+    tabButtons.forEach((button) => button.classList.toggle("active", button.dataset.pricingTabButton === tab));
+    tabPanels.forEach((panel) => {
+      panel.hidden = panel.dataset.pricingTab !== tab;
+    });
+  };
+  tabButtons.forEach((button) => button.addEventListener("click", () => activatePricingTab(button.dataset.pricingTabButton ?? "overview")));
+  activatePricingTab("overview");
   const equipmentProfilesList = document.querySelector<HTMLElement>("#equipmentProfilesList");
   const pricingReadinessList = document.querySelector<HTMLElement>("#pricingReadinessList");
   const commercialRateCardList = document.querySelector<HTMLElement>("#commercialRateCardList");
+  const vehicleClassCostProfilesList = document.querySelector<HTMLElement>("#vehicleClassCostProfilesList");
   const pricingDataSourcesList = document.querySelector<HTMLElement>("#pricingDataSourcesList");
   const pricingRuleVersionBadge = document.querySelector<HTMLElement>("#pricingRuleVersionBadge");
   const tollProviderStatusList = document.querySelector<HTMLElement>("#tollProviderStatusList");
@@ -2971,10 +3218,12 @@ function initPricingSettings(): void {
   const routeRiskRulesList = document.querySelector<HTMLElement>("#routeRiskRulesList");
   const refreshDieselButton = document.querySelector<HTMLButtonElement>("#refreshOfficialDieselButton");
   let currentCommercialRateCardRows: CommercialRateCardRecord[] = [];
+  let currentVehicleClassInternalCostProfiles: VehicleClassInternalCostProfileRecord[] = [];
 
   const reloadPricingSettings = async (message = "Active database values loaded."): Promise<void> => {
     const settings = await loadPricingSettings();
     currentCommercialRateCardRows = Array.isArray(settings.commercial_rate_card_rows) ? settings.commercial_rate_card_rows as CommercialRateCardRecord[] : [];
+    currentVehicleClassInternalCostProfiles = Array.isArray(settings.vehicle_class_internal_cost_profiles) ? settings.vehicle_class_internal_cost_profiles as VehicleClassInternalCostProfileRecord[] : [];
     populatePricingSettingsForm(form, settings);
     if (pricingRuleVersionBadge) {
       pricingRuleVersionBadge.textContent = String(settings.rule_version ?? "pricing-v3-commercial-rate-card");
@@ -2984,6 +3233,9 @@ function initPricingSettings(): void {
     }
     if (commercialRateCardList) {
       commercialRateCardList.innerHTML = renderCommercialRateCardTable(currentCommercialRateCardRows, String(settings.currency ?? "ZAR"));
+    }
+    if (vehicleClassCostProfilesList) {
+      vehicleClassCostProfilesList.innerHTML = renderVehicleClassInternalCostProfiles(currentVehicleClassInternalCostProfiles);
     }
     if (pricingDataSourcesList) {
       pricingDataSourcesList.innerHTML = renderPricingDataSources(settings);
@@ -3124,6 +3376,9 @@ function initPricingSettings(): void {
         await saveCommercialPricingSettings(payload);
         if (currentCommercialRateCardRows.length) {
           await saveCommercialRateCard(collectCommercialRateCardEdits(form, currentCommercialRateCardRows));
+        }
+        for (const profile of collectVehicleClassInternalCostProfiles(form, currentVehicleClassInternalCostProfiles)) {
+          await saveVehicleClassInternalCostProfile(profile);
         }
         await reloadPricingSettings("Pricing settings saved.");
       } catch (error) {
@@ -4412,6 +4667,13 @@ async function initQuoteReview(): Promise<void> {
   }
 
   const reviewRequest = request;
+  if (isSupabaseConfigured) {
+    try {
+      reviewRequest.operationalJourney = await loadOperationalJourneySummary(reviewRequest.id);
+    } catch {
+      reviewRequest.operationalJourney = null;
+    }
+  }
   const reviewOutput = output;
   const acceptedStatuses: QuoteStatus[] = ["client_accepted", "converted_to_load"];
   const isAcceptedQuote = acceptedStatuses.includes(reviewRequest.status);
@@ -4452,6 +4714,7 @@ async function initQuoteReview(): Promise<void> {
         }
       </div>
       ${dynamicAnswers.length ? `<div class="summary-block"><h3>Additional RFQ details</h3>${dynamicAnswers.map((answer) => `<p><strong>${escapeHtml(answer.question_key.replaceAll("_", " "))}</strong>: ${escapeHtml(answer.answer_value || "Not supplied")}</p>`).join("")}</div>` : ""}
+      ${renderOperationalJourneyCard(request)}
       ${renderRouteIntelligenceCard(request)}
       ${renderVehicleIntelligenceCard(request)}
       ${renderPricingSummaryCard(request)}
@@ -4460,6 +4723,22 @@ async function initQuoteReview(): Promise<void> {
   `;
   void hydrateRouteMapPreview(request);
   void hydrateEquipmentOverrideControls(request, canEditReviewPrice, output);
+
+  document.querySelector<HTMLButtonElement>("#saveReturnLoadButton")?.addEventListener("click", async () => {
+    const returnLoadStatus = document.querySelector<HTMLSelectElement>("[name='returnLoadStatus']")?.value ?? "none";
+    const notes = document.querySelector<HTMLInputElement>("[name='returnLoadNotes']")?.value.trim() ?? "";
+    if (!isSupabaseConfigured) {
+      output.innerHTML = `<strong>Return-load status not saved.</strong><span>Connect Supabase to save quote operational review fields.</span>`;
+      return;
+    }
+    try {
+      await updateQuoteReturnLoadStatus({ quoteRequestId: request.id, returnLoadStatus, notes });
+      output.innerHTML = `<strong>Return-load status saved.</strong><span>Commercial backload treatment remains review-required until Henning confirms the rule.</span>`;
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      output.innerHTML = `<strong>Return-load update failed.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+    }
+  });
 
   form.quotePrice.value = request.quotePrice?.toString() ?? "";
   form.adminNotes.value = request.adminNotes;
@@ -4935,6 +5214,57 @@ async function initCustomerPortal(): Promise<void> {
   }
 }
 
+function initHelp(): void {
+  const content = document.querySelector<HTMLElement>("#helpContent");
+  if (!content) return;
+
+  const topics = [
+    {
+      title: "Commercial rate card",
+      text: "Customer selling price starts from Time Trucking's approved commercial rate card. Internal operating costs are analysis only unless Henning approves a pricing rule."
+    },
+    {
+      title: "Day vs km",
+      text: "The engine keeps the day-vs-km choice review-required until Henning confirms the exact rule for choosing between the two commercial bases."
+    },
+    {
+      title: "Depot and return route",
+      text: "Operational review uses depot to pickup to delivery to depot. Return loads and backloads are recorded, but no discount or uplift is applied without an approved rule."
+    },
+    {
+      title: "Diesel",
+      text: "Official DMPR diesel values feed the diesel reference. Manual overrides remain controlled and must not replace validated official records with zero or blank values."
+    },
+    {
+      title: "Tolls",
+      text: "Automatic tolls use official South African toll data when the route, toll class, and matching evidence are reliable. Otherwise the quote remains review-required."
+    },
+    {
+      title: "External charges",
+      text: "Crane, refrigeration, third-party handling, high-value insurance, permits, and cross-border external costs stay manual or review-required unless an approved source/rule exists."
+    },
+    {
+      title: "Customer quote safety",
+      text: "Customer pages must show the quote price and service terms only. Internal cost, margin, contribution, source snapshots, and manager warnings stay inside Quote Review."
+    },
+    {
+      title: "VAT",
+      text: "South African VAT is configured as a source-backed pricing setting and should be changed only when the official authority rate changes."
+    }
+  ];
+
+  content.innerHTML = `
+    <div class="help-topic-grid">
+      ${topics.map((topic) => `
+        <article class="summary-block">
+          <h3>${escapeHtml(topic.title)}</h3>
+          <p>${escapeHtml(topic.text)}</p>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
 async function bootstrap(): Promise<void> {
   await initLogin();
 
@@ -4961,6 +5291,7 @@ async function bootstrap(): Promise<void> {
   void initQuoteResponse();
   void initQuoteView();
   void initCustomerPortal();
+  initHelp();
 }
 
 void bootstrap();

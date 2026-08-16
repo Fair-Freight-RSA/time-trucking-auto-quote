@@ -104,6 +104,87 @@ test("final polish keeps customer and manager UI premium and nontechnical", () =
   assert.ok(login.includes("showPasswordToggle"), "login should support a show-password control");
   assert.equal(login.includes("Supabase Auth"), false, "login page should avoid backend-provider jargon");
   assert.equal(users.includes("Supabase Auth user ID"), false, "users page should avoid backend-provider jargon");
+  assert.equal(users.includes("User UUID"), false, "users page must not ask managers for backend UUIDs");
+  assert.ok(users.includes("Invite User"), "users page should use the secure invitation flow");
+  assert.ok(users.includes("No Supabase dashboard or UUID required"), "users page should explain UUID-free user creation");
+});
+
+test("final production hardening adds secure invitations, depot journey review, manual external-cost controls, and concise help", () => {
+  const app = read("src/app.ts");
+  const client = read("src/supabaseClient.ts");
+  const edge = read("supabase/functions/production-integrations/index.ts");
+  const migration = read("supabase/migrations/20260810014400_final_operational_hardening_foundation.sql");
+  const pricingPage = read("public/pricing-settings.html");
+  const adminPage = read("public/admin-settings.html") + app;
+  const helpPage = read("public/help.html");
+
+  for (const expected of [
+    "internal_user_invitations",
+    "company_operating_depots",
+    "quote_operational_journey_legs",
+    "quote_manual_external_costs",
+    "vat_rate_authorities",
+    "South African Revenue Service (SARS)",
+    "cross_border_external_charge_sources",
+    "permit_fee_catalogue",
+    "cargo_insurance_profiles",
+    "contextual_help_topics",
+    "ttaq_quote_operational_journey_summary",
+    "ttaq_update_quote_return_load_status",
+    "ttaq_save_default_operating_depot",
+    "return_load_status in ('none', 'available', 'unknown_review_required')",
+    "Commercial billable distance remains separate until Henning confirms day/km and return-trip rules",
+    "Missing costs remain review-required, not R0",
+    "Deprecated: crane cost is quote-specific/manual review",
+    "Deprecated: high-value insurance requires approved insurer formula or manual cost"
+  ]) {
+    assert.ok(migration.includes(expected), `final hardening migration should include ${expected}`);
+  }
+
+  assert.equal(client.includes("saveInternalUser"), false, "client must not expose direct internal-user UUID upsert");
+  assert.ok(client.includes("inviteInternalUser"), "client should invoke secure server-side invitations");
+  assert.ok(client.includes("saveDefaultOperatingDepot"), "client should save default depot through RPC");
+  assert.ok(edge.includes("invite_internal_user"), "Edge Function should expose secure invite action");
+  assert.ok(edge.includes("auth.admin.inviteUserByEmail"), "Edge Function should create/login-link users server-side");
+  assert.ok(edge.includes("requireInternalUserManagement"), "user invitation must require internal user-management permission");
+  assert.equal(edge.includes("DIESEL_REFRESH_SECRET"), true, "server-only Edge Function may read refresh secret");
+
+  for (const expected of [
+    "pricing-tabs",
+    "Manual crane cost required",
+    "Insurance review required",
+    "Operational info only",
+    "HAZ cargo selects the HAZ commercial rate",
+    "Advanced / Legacy / Fallback Settings"
+  ]) {
+    assert.ok(pricingPage.includes(expected), `pricing page should include ${expected}`);
+  }
+
+  for (const expected of [
+    "Default operating depot",
+    "Registered legal name",
+    "VAT number",
+    "Quote contact name",
+    "saveDefaultOperatingDepot",
+    "Depot to pickup to delivery to depot model"
+  ]) {
+    assert.ok(adminPage.includes(expected), `admin settings should include ${expected}`);
+  }
+
+  for (const expected of [
+    "data-page=\"help\"",
+    "Customer quote safety",
+    "External charges",
+    "Internal guide",
+    "data-nav=\"help\""
+  ]) {
+    assert.ok(helpPage.includes(expected) || app.includes(expected), `help route should include ${expected}`);
+  }
+
+  assert.ok(app.includes("renderOperationalJourneyCard"), "Quote Review should render depot-return journey review");
+  assert.ok(app.includes("Commercial backload treatment remains review-required until Henning confirms the rule."), "Quote Review should support authorized return-load status updates");
+  assert.equal(pricingPage.includes("Default toll cost"), false, "pricing UI should not foreground legacy default toll pricing");
+  assert.equal(pricingPage.includes("Generic Hazmat surcharge"), false, "pricing UI should not foreground generic HAZ stacking");
 });
 
 test("public RFQ submit button has loading, duplicate-click protection, and success feedback", () => {
@@ -278,6 +359,8 @@ test("official diesel scheduler uses Vault, pg_cron, pg_net, and secure invocati
 test("official toll engine models providers, plazas, Class 1-4 tariffs, and VAT-inclusive snapshots", () => {
   const migration = read("supabase/migrations/20260810013000_official_toll_pricing_engine.sql");
   const repairMigration = read("supabase/migrations/20260810013900_repair_sa_toll_catalogue.sql");
+  const verifiedMigration = read("supabase/migrations/20260810014000_verify_2026_toll_catalogue.sql");
+  const coordinateMigration = read("supabase/migrations/20260810014100_correct_toll_coordinate_readiness.sql");
   const edge = read("supabase/functions/production-integrations/index.ts");
   const pricingPage = read("public/pricing-settings.html");
   const app = read("src/app.ts");
@@ -361,8 +444,45 @@ test("official toll engine models providers, plazas, Class 1-4 tariffs, and VAT-
   }
   assert.equal(repairMigration.includes("delete from public.toll_tariffs"), false, "toll repair must not delete historical tariffs");
   assert.equal(repairMigration.includes("truncate"), false, "toll repair must not truncate toll history");
+  for (const expected of [
+    "Government Gazette Nos. 54087 and 54088",
+    "'vat_included', true",
+    "za_n3tc_official_tolls_stale_webpage_superseded",
+    "n3tc-n3-de-hoek-mainline', 'De Hoek Mainline Plaza', 'N3', 'za_n3tc_official_tolls', -26.7256385, 28.4147685, 'mainline', 67.00, 105.00, 160.00, 230.00",
+    "n3tc-n3-wilge-mainline', 'Wilge Mainline Plaza', 'N3', 'za_n3tc_official_tolls', -27.1008650, 28.6648159, 'mainline', 94.00, 161.00, 215.00, 304.00",
+    "n3tc-n3-tugela-mainline', 'Tugela Mainline Plaza', 'N3', 'za_n3tc_official_tolls', -28.4480585, 29.5313636, 'mainline', 100.00, 165.00, 260.00, 359.00",
+    "n3tc-n3-mooi-mainline', 'Mooi Mainline Plaza', 'N3', 'za_n3tc_official_tolls', -29.1991016, 29.9984886, 'mainline', 70.00, 171.00, 240.00, 324.00",
+    "sanral-n1-grasmere-mainline",
+    "sanral-n1-vaal-mainline",
+    "sanral-n1-verkeerdevlei-mainline",
+    "sanral-n1-huguenot-mainline",
+    "sanral-n3-mariannhill-mainline",
+    "coordinate_confidence = 'review_required'",
+    "geometry_matching_ready_for_verified_plazas",
+    "ttaq_toll_tariffs_one_active_source_per_effective"
+  ]) {
+    assert.ok(verifiedMigration.includes(expected), `verified toll migration should include ${expected}`);
+  }
+  assert.equal(verifiedMigration.includes("delete from public.toll_tariffs"), false, "verified toll migration must not delete historical tariffs");
+  assert.equal(verifiedMigration.includes("truncate"), false, "verified toll migration must not truncate toll history");
+  for (const expected of [
+    "n3tc-n3-tugela-east-ramp",
+    "Ramp coordinate is not independently verified; do not reuse Tugela mainline coordinate",
+    "sanral-n1-grasmere-mainline', -26.4171100, 27.8807500",
+    "sanral-n1-vaal-mainline', -26.8563900, 27.6352800",
+    "sanral-n1-verkeerdevlei-mainline', -28.7988900, 26.6905600",
+    "sanral-n1-huguenot-mainline', -33.7428000, 19.0197000",
+    "sanral-n3-mariannhill-mainline', -29.8230200, 30.8027600",
+    "select public.ttaq_refresh_toll_provider_coverage()"
+  ]) {
+    assert.ok(coordinateMigration.includes(expected), `coordinate correction migration should include ${expected}`);
+  }
+  assert.equal(coordinateMigration.includes("delete from public.toll_tariffs"), false, "coordinate correction must not delete historical tariffs");
+  assert.equal(coordinateMigration.includes("truncate"), false, "coordinate correction must not truncate toll history");
   assert.ok(edge.includes("plaza.plaza_type === \"ramp\" ? 180 : 900"), "ramp matching should be stricter than mainline matching");
   assert.ok(edge.includes("confidenceRatio < 0.72"), "ramp matches should require high confidence to avoid accidental ramp tolls");
+  assert.ok(edge.includes("routeReadyCoordinateConfidence"), "automatic matching should require route-ready coordinate confidence");
+  assert.ok(edge.includes("plaza.latitude === null || plaza.longitude === null"), "missing coordinates should not be auto-matched");
   assert.ok(edge.includes("mode: \"verified\""), "scheduled refresh should keep populated TRAC/N3TC coverage verified instead of reverting to partial");
 
   for (const browserFile of ["src/app.ts", "src/supabaseClient.ts", "public/pricing-settings.html"]) {
@@ -770,8 +890,8 @@ test("pricing settings UI is rebuilt around commercial pricing, not cost-build s
     "Customer selling-price diesel adjustment",
     "Automatic Toll Pricing",
     "Additional Commercial Charges",
-    "Additional Hazmat Service Charge",
-    "Internal Operating Cost Analysis",
+    "Additional Hazardous-Goods External Cost",
+    "Vehicle-Class Operating Cost Profiles",
     "They do NOT automatically increase the customer selling price",
     "Equipment & Toll Configuration",
     "Pricing Data Sources",
@@ -798,6 +918,63 @@ test("pricing settings UI is rebuilt around commercial pricing, not cost-build s
   assert.ok(migration.includes("rule_version = 'pricing-v3-commercial-rate-card'"), "saving settings should preserve the commercial pricing engine version");
   assert.equal(publicQuote.includes("Internal Operating Cost Analysis"), false, "customer pages must not expose internal operating-cost analysis");
   assert.equal(publicQuote.includes("Estimated contribution / profitability"), false, "customer pages must not expose profitability analysis");
+});
+
+test("vehicle-class internal operating-cost profiles are configurable without invented default costs", () => {
+  const migration = read("supabase/migrations/20260810014200_vehicle_class_internal_cost_profiles.sql");
+  const securityMigration = read("supabase/migrations/20260810014300_restrict_vehicle_class_internal_cost_summary.sql");
+  const page = read("public/pricing-settings.html");
+  const app = read("src/app.ts");
+  const client = read("src/supabaseClient.ts");
+
+  for (const expected of [
+    "vehicle_class_internal_cost_profiles",
+    "vehicle_class_internal_cost_components",
+    "equipment_internal_cost_profile_overrides",
+    "'1_ton', '1 Ton'",
+    "'1_8_ton', '1.8 Ton'",
+    "'3_ton', '3 Ton'",
+    "'5_ton', '5 Ton'",
+    "'8_ton', '8 Ton'",
+    "'12_ton', '12 Ton'",
+    "'semi', 'Semi'",
+    "'superlink', 'S/L'",
+    "fuel_consumption_l_per_100km",
+    "tyres_per_km",
+    "maintenance_per_km",
+    "insurance_per_km",
+    "depreciation_per_km",
+    "vehicle_overhead_per_km",
+    "driver_hourly_cost",
+    "night_out_allowance",
+    "null::numeric",
+    "not_configured",
+    "Requires Time Trucking input",
+    "Time Trucking company default confirmed at R1,750",
+    "Internal cost analysis incomplete",
+    "Internal operating costs do not increase the customer selling price",
+    "Legacy generic operating-cost profile preserved for historical compatibility",
+    "ttaq_save_vehicle_class_internal_cost_profile",
+    "manage_pricing_rules"
+  ]) {
+    assert.ok(migration.includes(expected), `vehicle-class internal-cost migration should include ${expected}`);
+  }
+
+  assert.ok(migration.includes("amount is null or amount >= 0"), "internal cost component amount should support null but never negative");
+  assert.ok(migration.includes("where equipment.id = nullif(calculation.pricing_source_snapshot #>> '{equipment,selected_equipment_profile_id}', '')::uuid"), "standard equipment should inherit vehicle-class profile mappings");
+  assert.equal(migration.includes("else 0::numeric end"), false, "missing internal cost values must not be seeded as confirmed zero");
+  assert.equal(migration.includes("base_cost_value :="), false, "vehicle-class internal-cost migration must not change commercial selling-price base formulas");
+  assert.ok(securityMigration.includes("ttaq_has_internal_permission(auth.uid(), 'view_all_quotes')"), "summary RPC should require internal read permissions");
+  assert.ok(securityMigration.includes("ttaq_has_internal_permission(auth.uid(), 'manage_pricing_rules')"), "summary RPC should allow pricing managers");
+  assert.ok(securityMigration.includes("revoke all on function public.ttaq_vehicle_class_internal_cost_profile_summary() from anon"), "anonymous users must not execute internal-cost summary RPC");
+  assert.ok(securityMigration.includes("revoke all on function public.ttaq_save_vehicle_class_internal_cost_profile(jsonb) from anon"), "anonymous users must not execute internal-cost save RPC");
+
+  assert.ok(page.includes("Vehicle-Class Operating Cost Profiles"), "pricing settings should expose vehicle-class cost profiles");
+  assert.ok(page.includes("Blank means Not configured, not R0") || app.includes("Blank means Not configured, not R0"), "UI should distinguish blank values from zero");
+  assert.ok(app.includes("renderVehicleClassInternalCostProfiles"), "settings app should render vehicle-class profile controls");
+  assert.ok(app.includes("Internal cost/contribution analysis is incomplete"), "Quote Review should show incomplete internal analysis instead of R0");
+  assert.ok(client.includes("ttaq_vehicle_class_internal_cost_profile_summary"), "client should load vehicle-class internal-cost summary RPC");
+  assert.ok(client.includes("ttaq_save_vehicle_class_internal_cost_profile"), "client should save vehicle-class internal-cost profiles through RPC");
 });
 
 test("route-risk override RPC uses the project internal user identity model", () => {

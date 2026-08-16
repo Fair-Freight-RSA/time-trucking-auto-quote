@@ -23,6 +23,7 @@ type EmailResult = {
 type IntegrationAction =
   | "generate_quote_pdf"
   | "generate_invoice_pdf"
+  | "invite_internal_user"
   | "get_quote_pdf_url"
   | "get_internal_document_url"
   | "create_upload_signed_url"
@@ -148,6 +149,7 @@ function assertAction(value: unknown): IntegrationAction {
   const actions: IntegrationAction[] = [
     "generate_quote_pdf",
     "generate_invoice_pdf",
+    "invite_internal_user",
     "get_quote_pdf_url",
     "get_internal_document_url",
     "create_upload_signed_url",
@@ -233,6 +235,133 @@ async function requireInternal(req: Request, permission: "manage_rfqs" | "view_a
     || (permission === "view_all_quotes" && (user.can_view_all_quotes || user.can_manage_rfqs));
   if (!allowed) throw new Error("Your role is not allowed to perform this action.");
   return { user, userClient };
+}
+
+async function requireInternalUserManagement(req: Request) {
+  const userClient = createUserClient(req);
+  const { data, error } = await userClient.rpc("ttaq_get_current_internal_user");
+  if (error) throw new Error("Internal access could not be verified.");
+  const user = Array.isArray(data) ? data[0] : data;
+  if (!user || user.user_status !== "active") throw new Error("Active Time Trucking internal access is required.");
+  if (user.role !== "owner" && !user.can_manage_users) throw new Error("Your role is not allowed to invite users.");
+  return { user, userClient };
+}
+
+function rolePermissions(role: string, overrides: JsonMap | undefined = {}): JsonMap {
+  const defaults: Record<string, JsonMap> = {
+    owner: {
+      can_view_all_quotes: true,
+      can_manage_rfqs: true,
+      can_approve_quotes: true,
+      can_adjust_pricing: true,
+      can_manage_pricing_rules: true,
+      can_manage_users: true
+    },
+    manager: {
+      can_view_all_quotes: true,
+      can_manage_rfqs: true,
+      can_approve_quotes: true,
+      can_adjust_pricing: false,
+      can_manage_pricing_rules: false,
+      can_manage_users: false
+    },
+    staff: {
+      can_view_all_quotes: false,
+      can_manage_rfqs: true,
+      can_approve_quotes: false,
+      can_adjust_pricing: false,
+      can_manage_pricing_rules: false,
+      can_manage_users: false
+    },
+    viewer: {
+      can_view_all_quotes: true,
+      can_manage_rfqs: false,
+      can_approve_quotes: false,
+      can_adjust_pricing: false,
+      can_manage_pricing_rules: false,
+      can_manage_users: false
+    }
+  };
+  return { ...(defaults[role] ?? defaults.viewer), ...overrides };
+}
+
+async function inviteInternalUser(req: Request, body: JsonMap): Promise<JsonMap> {
+  const { user } = await requireInternalUserManagement(req);
+  const email = clean(body.email).toLowerCase();
+  const fullName = clean(body.fullName ?? body.full_name);
+  const phone = clean(body.phone);
+  const role = clean(body.role, "viewer");
+  if (!isEmail(email)) throw new Error("Enter a valid email address.");
+  if (!["owner", "manager", "staff", "viewer"].includes(role)) throw new Error("Choose a valid Time Trucking role.");
+  if (role === "owner" && user.role !== "owner") throw new Error("Only an owner can invite another owner.");
+  const permissions = rolePermissions(role, body.permissions as JsonMap | undefined);
+  const redirectTo = appPublicUrl ? `${appPublicUrl}/login.html` : undefined;
+
+  const { data: invitationRecord, error: invitationError } = await serviceClient
+    .from("internal_user_invitations")
+    .insert({
+      email,
+      full_name: fullName || null,
+      phone: phone || null,
+      role,
+      permissions,
+      invitation_status: "pending",
+      invited_by: user.id,
+      last_sent_at: new Date().toISOString()
+    })
+    .select("*")
+    .single();
+  if (invitationError) throw new Error("Could not record the user invitation.");
+
+  try {
+    const { data, error } = await serviceClient.auth.admin.inviteUserByEmail(email, {
+      redirectTo,
+      data: {
+        full_name: fullName,
+        time_trucking_role: role
+      }
+    });
+    if (error) throw error;
+    const authUserId = data.user?.id;
+    if (!authUserId) throw new Error("Supabase did not return the invited user id.");
+
+    const { error: profileError } = await serviceClient.from("internal_users").upsert({
+      id: authUserId,
+      email,
+      full_name: fullName || null,
+      role,
+      user_status: "active",
+      can_view_all_quotes: Boolean(permissions.can_view_all_quotes),
+      can_manage_rfqs: Boolean(permissions.can_manage_rfqs),
+      can_approve_quotes: Boolean(permissions.can_approve_quotes),
+      can_adjust_pricing: Boolean(permissions.can_adjust_pricing),
+      can_manage_pricing_rules: Boolean(permissions.can_manage_pricing_rules),
+      can_manage_users: Boolean(permissions.can_manage_users),
+      invited_by: user.id,
+      invited_at: new Date().toISOString(),
+      revoked_at: null
+    });
+    if (profileError) throw profileError;
+
+    await serviceClient
+      .from("internal_user_invitations")
+      .update({ invitation_status: "sent", auth_user_id: authUserId, last_error: null })
+      .eq("id", invitationRecord.id);
+
+    return {
+      status: "sent",
+      email,
+      role,
+      authUserLinked: true,
+      message: "Invitation sent and Time Trucking access record linked automatically."
+    };
+  } catch (error) {
+    await serviceClient
+      .from("internal_user_invitations")
+      .update({ invitation_status: "failed", last_error: errorMessage(error) })
+      .eq("id", invitationRecord.id);
+    throw new Error("Invitation could not be sent. Check the email address and Supabase Auth email settings.");
+  }
 }
 
 async function signedUrl(bucket: string, path: string, expiresIn = 900): Promise<string> {
@@ -472,7 +601,10 @@ async function matchOfficialTollPlazas(polyline: string | null): Promise<JsonMap
     .limit(1000);
   if (error) throw error;
   const matches: JsonMap[] = [];
+  const routeReadyCoordinateConfidence = new Set(["operator_published", "verified_route_geometry", "verified_map_source"]);
   for (const plaza of data ?? []) {
+    if (!routeReadyCoordinateConfidence.has(String(plaza.coordinate_confidence ?? "review_required"))) continue;
+    if (plaza.latitude === null || plaza.longitude === null) continue;
     const point = { latitude: Number(plaza.latitude), longitude: Number(plaza.longitude) };
     if (!Number.isFinite(point.latitude) || !Number.isFinite(point.longitude)) continue;
     let bestDistance = Number.POSITIVE_INFINITY;
@@ -1331,6 +1463,10 @@ Deno.serve(async (req) => {
 
     if (action === "generate_invoice_pdf") {
       return json(req, 200, await generateInvoicePdf(req, assertUuid(body.invoiceId, "Invoice id")));
+    }
+
+    if (action === "invite_internal_user") {
+      return json(req, 200, await inviteInternalUser(req, body));
     }
 
     if (action === "get_quote_pdf_url") {

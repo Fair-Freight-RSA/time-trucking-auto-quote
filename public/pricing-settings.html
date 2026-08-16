@@ -29,7 +29,15 @@
         </section>
 
         <form class="card pricing-settings-page" id="pricingSettingsForm">
-          <section class="pricing-admin-section readiness-section">
+          <nav class="pricing-tabs" aria-label="Pricing settings sections">
+            <button type="button" class="active" data-pricing-tab-button="overview">Overview</button>
+            <button type="button" data-pricing-tab-button="commercial">Commercial Pricing</button>
+            <button type="button" data-pricing-tab-button="external">External Charges</button>
+            <button type="button" data-pricing-tab-button="internal">Internal Costing</button>
+            <button type="button" data-pricing-tab-button="equipment">Equipment</button>
+            <button type="button" data-pricing-tab-button="advanced">Advanced</button>
+          </nav>
+          <section class="pricing-admin-section readiness-section" data-pricing-tab="overview">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Pricing readiness</p>
@@ -42,7 +50,7 @@
             <div id="pricingReadinessList" class="readiness-grid">Loading readiness checks...</div>
           </section>
 
-          <section class="pricing-admin-section commercial-primary">
+          <section class="pricing-admin-section commercial-primary" data-pricing-tab="commercial">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Customer selling price</p>
@@ -53,7 +61,7 @@
             <div id="commercialRateCardList" class="commercial-rate-card-table">Loading commercial rate card...</div>
           </section>
 
-          <section class="pricing-admin-section">
+          <section class="pricing-admin-section" data-pricing-tab="commercial">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Customer selling price</p>
@@ -130,7 +138,7 @@
             <div id="tollCatalogueList" class="equipment-profiles-list">Loading toll plaza catalogue...</div>
           </section>
 
-          <section class="pricing-admin-section">
+          <section class="pricing-admin-section" data-pricing-tab="external">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Customer selling price</p>
@@ -144,15 +152,15 @@
               <article class="rule-card"><strong>Route-risk surcharge</strong><label>Fallback amount<input name="default_route_risk_surcharge" type="number" min="0" step="0.01" /></label><p>No unapproved route-risk amount is invented.</p></article>
               <article class="rule-card"><strong>Permit</strong><label>Amount<input name="permit_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
               <article class="rule-card"><strong>Escort</strong><label>Amount<input name="escort_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
-              <article class="rule-card"><strong>Refrigeration</strong><label>Amount<input name="refrigeration_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
-              <article class="rule-card"><strong>Crane</strong><label>Amount<input name="crane_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
-              <article class="rule-card"><strong>Forklift</strong><label>Amount<input name="forklift_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
-              <article class="rule-card"><strong>High-value cargo</strong><label>Threshold<input name="high_value_threshold" type="number" min="0" step="0.01" /></label><label>Charge<input name="high_value_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
-              <article class="rule-card warning-card"><strong>Additional Hazmat Service Charge</strong><label>Optional amount<input name="hazmat_surcharge" type="number" min="0" step="0.01" /></label><p>Normal HAZ pricing selects the HAZ commercial rate. This optional field is only for costs not already represented by the HAZ commercial rate.</p></article>
+              <article class="rule-card warning-card"><strong>Refrigeration</strong><input name="refrigeration_surcharge" type="hidden" value="0" /><span class="flag warning">Review required</span><p>Refrigeration is equipment/job specific. Enter a quote-specific adjustment only when an approved amount exists.</p></article>
+              <article class="rule-card warning-card"><strong>Crane</strong><input name="crane_surcharge" type="hidden" value="0" /><span class="flag warning">Manual crane cost required</span><p>No generic crane price is used. Required crane work must have a supplier/reference and amount.</p></article>
+              <article class="rule-card"><strong>Forklift</strong><input name="forklift_surcharge" type="hidden" value="0" /><span class="flag info">Operational info only</span><p>No automatic forklift charge. Use third-party handling cost only if Time Trucking arranges it.</p></article>
+              <article class="rule-card warning-card"><strong>High-value cargo</strong><input name="high_value_threshold" type="hidden" value="0" /><input name="high_value_surcharge" type="hidden" value="0" /><span class="flag warning">Insurance review required</span><p>No generic insurance percentage is used. Additional insurance requires approved policy/rate or manual insurer cost.</p></article>
+              <article class="rule-card warning-card"><strong>Additional Hazardous-Goods External Cost</strong><input name="hazmat_surcharge" type="hidden" value="0" /><p>HAZ cargo selects the HAZ commercial rate. External statutory/permit/escort costs remain separate and quote-specific.</p></article>
             </div>
           </section>
 
-          <section class="pricing-admin-section">
+          <section class="pricing-admin-section" data-pricing-tab="external">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Configured policy</p>
@@ -172,34 +180,25 @@
             </div>
           </section>
 
-          <section class="pricing-admin-section internal-cost-section">
+          <section class="pricing-admin-section internal-cost-section" data-pricing-tab="internal">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Internal only</p>
-                <h2>Internal Operating Cost Analysis</h2>
-                <p>These values are used to estimate Time Trucking's internal trip cost and profitability. They do NOT automatically increase the customer selling price.</p>
+                <h2>Vehicle-Class Operating Cost Profiles</h2>
+                <p>These values estimate Time Trucking's internal trip cost and contribution by vehicle class. They do NOT automatically increase the customer selling price.</p>
               </div>
             </div>
             <div class="profitability-equation">
               <span>Customer commercial selling price</span>
               <span>minus</span>
               <span>Estimated internal operating cost</span>
-              <strong>Estimated contribution / profitability</strong>
+              <strong>Estimated contribution</strong>
             </div>
-            <div class="grid three">
-              <label>Vehicle cost profile<input name="vehicle_cost_profile_key" value="default" /></label>
-              <label>Fuel consumption L/100km<input name="fuel_consumption_l_per_100km" type="number" min="0" step="0.0001" /></label>
-              <label>Tyre cost R/km<input name="average_tyre_cost_per_km" type="number" min="0" step="0.0001" /></label>
-              <label>Maintenance R/km<input name="maintenance_cost_per_km" type="number" min="0" step="0.0001" /></label>
-              <label>Insurance R/km<input name="insurance_cost_per_km" type="number" min="0" step="0.0001" /></label>
-              <label>Depreciation R/km<input name="depreciation_cost_per_km" type="number" min="0" step="0.0001" /></label>
-              <label>Vehicle overhead R/km<input name="vehicle_overhead_per_km" type="number" min="0" step="0.0001" /></label>
-              <label>Driver hourly cost<input name="driver_hourly_wage" type="number" min="0" step="0.0001" /></label>
-              <label>Driver overnight allowance mirror<input name="driver_overnight_allowance" type="number" min="0" step="0.01" /></label>
-            </div>
+            <div id="vehicleClassCostProfilesList" class="equipment-profiles-list">Loading vehicle-class operating-cost profiles...</div>
+            <input name="vehicle_cost_profile_key" type="hidden" value="vehicle_class_profiles" />
           </section>
 
-          <section class="pricing-admin-section">
+          <section class="pricing-admin-section" data-pricing-tab="equipment">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Equipment</p>
@@ -210,7 +209,7 @@
             <div id="equipmentProfilesList" class="equipment-profiles-list">Loading equipment profiles...</div>
           </section>
 
-          <section class="pricing-admin-section">
+          <section class="pricing-admin-section" data-pricing-tab="advanced">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Automation</p>
@@ -232,6 +231,14 @@
                 <label>Maximum discount %<input name="maximum_discount_percent" type="number" min="0" step="0.0001" /></label>
                 <label>Minimum margin warning %<input name="minimum_margin_percent" type="number" min="0" step="0.0001" /></label>
                 <label>Minimum selling price floor<input name="minimum_selling_price" type="number" min="0" step="0.01" /></label>
+                <label>Legacy fuel consumption L/100km<input name="fuel_consumption_l_per_100km" type="number" min="0" step="0.0001" readonly /></label>
+                <label>Legacy tyre cost R/km<input name="average_tyre_cost_per_km" type="number" min="0" step="0.0001" readonly /></label>
+                <label>Legacy maintenance R/km<input name="maintenance_cost_per_km" type="number" min="0" step="0.0001" readonly /></label>
+                <label>Legacy insurance R/km<input name="insurance_cost_per_km" type="number" min="0" step="0.0001" readonly /></label>
+                <label>Legacy depreciation R/km<input name="depreciation_cost_per_km" type="number" min="0" step="0.0001" readonly /></label>
+                <label>Legacy vehicle overhead R/km<input name="vehicle_overhead_per_km" type="number" min="0" step="0.0001" readonly /></label>
+                <label>Legacy driver hourly cost<input name="driver_hourly_wage" type="number" min="0" step="0.0001" readonly /></label>
+                <label>Legacy driver overnight allowance<input name="driver_overnight_allowance" type="number" min="0" step="0.01" readonly /></label>
                 <label>Emergency fallback toll cost<input name="default_toll_cost" type="number" min="0" step="0.01" /></label>
                 <label>Toll manual review<select name="toll_manual_review_required"><option value="true">Required</option><option value="false">Not required</option></select></label>
                 <label>Currency<input name="currency" value="ZAR" /></label>

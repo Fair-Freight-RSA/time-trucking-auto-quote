@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { CargoCategory, CommercialRateCardRecord, CustomerPortalRecord, EquipmentSource, InternalRole, InternalSettingsPayload, InternalUserRecord, PublicQuoteDocumentRecord, PublicQuoteResponseRecord, QuoteDocumentRecord, QuoteRequestRecord, QuoteStatus, StandardEquipmentProfileRecord, StopType } from "./types";
+import type { CargoCategory, CommercialRateCardRecord, CustomerPortalRecord, EquipmentSource, InternalRole, InternalSettingsPayload, InternalUserRecord, OperationalJourneySummaryRecord, PublicQuoteDocumentRecord, PublicQuoteResponseRecord, QuoteDocumentRecord, QuoteRequestRecord, QuoteStatus, StandardEquipmentProfileRecord, StopType, VehicleClassInternalCostProfileRecord } from "./types";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -56,34 +56,20 @@ export async function listInternalUsers(): Promise<InternalUserRecord[]> {
   return (data ?? []) as InternalUserRecord[];
 }
 
-export async function saveInternalUser(input: {
-  id: string;
+export async function inviteInternalUser(input: {
   email: string;
   fullName: string;
+  phone?: string;
   role: InternalRole;
-  canViewAllQuotes: boolean;
-  canManageRfqs: boolean;
-  canApproveQuotes: boolean;
-  canAdjustPricing: boolean;
-  canManagePricingRules: boolean;
-  canManageUsers: boolean;
-}): Promise<void> {
-  if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.from("internal_users").upsert({
-    id: input.id,
+  permissions?: Record<string, boolean>;
+}): Promise<{ status: string; email: string; role: string; message?: string }> {
+  return invokeProductionIntegration("invite_internal_user", {
     email: input.email,
-    full_name: input.fullName || null,
+    fullName: input.fullName,
+    phone: input.phone || undefined,
     role: input.role,
-    user_status: "active",
-    can_view_all_quotes: input.canViewAllQuotes,
-    can_manage_rfqs: input.canManageRfqs,
-    can_approve_quotes: input.canApproveQuotes,
-    can_adjust_pricing: input.canAdjustPricing,
-    can_manage_pricing_rules: input.canManagePricingRules,
-    can_manage_users: input.canManageUsers,
-    revoked_at: null
+    permissions: input.permissions ?? {}
   });
-  if (error) throw error;
 }
 
 export async function revokeInternalUser(userId: string): Promise<void> {
@@ -92,6 +78,27 @@ export async function revokeInternalUser(userId: string): Promise<void> {
     target_user_id: userId
   });
   if (error) throw error;
+}
+
+export async function saveDefaultOperatingDepot(input: {
+  displayName: string;
+  fullAddress: string;
+  googlePlaceId?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}): Promise<string | null> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.rpc("ttaq_save_default_operating_depot", {
+    depot_payload: {
+      display_name: input.displayName,
+      full_address: input.fullAddress,
+      google_place_id: input.googlePlaceId || null,
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null
+    }
+  });
+  if (error) throw error;
+  return (data ?? null) as string | null;
 }
 
 export async function reactivateInternalUser(userId: string): Promise<void> {
@@ -226,6 +233,29 @@ export async function loadAdminQuoteRequest(id: string): Promise<QuoteRequestRec
     .maybeSingle();
   if (error) throw error;
   return data as QuoteRequestRecord | null;
+}
+
+export async function loadOperationalJourneySummary(quoteRequestId: string): Promise<OperationalJourneySummaryRecord | null> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.rpc("ttaq_quote_operational_journey_summary", {
+    target_quote_request_id: quoteRequestId
+  });
+  if (error) throw error;
+  return (data ?? null) as OperationalJourneySummaryRecord | null;
+}
+
+export async function updateQuoteReturnLoadStatus(input: {
+  quoteRequestId: string;
+  returnLoadStatus: string;
+  notes?: string;
+}): Promise<void> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { error } = await supabase.rpc("ttaq_update_quote_return_load_status", {
+    target_quote_request_id: input.quoteRequestId,
+    return_load_status_value: input.returnLoadStatus,
+    notes_value: input.notes ?? null
+  });
+  if (error) throw error;
 }
 
 export async function updateAdminQuote(
@@ -412,6 +442,22 @@ export async function saveCommercialPricingSettings(payload: Record<string, unkn
   if (error) throw error;
 }
 
+export async function saveVehicleClassInternalCostProfile(profile: VehicleClassInternalCostProfileRecord): Promise<void> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { error } = await supabase.rpc("ttaq_save_vehicle_class_internal_cost_profile", {
+    profile_payload: {
+      vehicle_class_key: profile.vehicle_class_key,
+      display_name: profile.display_name,
+      effective_from: profile.effective_from,
+      source_basis: profile.source_basis,
+      notes: profile.notes,
+      profile_status: profile.profile_status,
+      components: profile.components
+    }
+  });
+  if (error) throw error;
+}
+
 export async function refreshOfficialDieselPrice(): Promise<Record<string, unknown>> {
   return invokeProductionIntegration<Record<string, unknown>>("refresh_official_diesel");
 }
@@ -443,6 +489,7 @@ export async function loadPricingSettings(): Promise<Record<string, unknown>> {
     tollCatalogueResult,
     routeRiskPolicyResult,
     commercialRateCardResult,
+    vehicleClassInternalCostProfilesResult,
     equipmentProfilesResult
   ] = await Promise.all([
     supabase.rpc("ttaq_current_diesel_input", { profile_id: profileId }),
@@ -457,10 +504,11 @@ export async function loadPricingSettings(): Promise<Record<string, unknown>> {
     supabase.rpc("ttaq_current_toll_catalogue"),
     supabase.rpc("ttaq_route_risk_policy_summary"),
     supabase.from("time_trucking_commercial_rate_card").select("*").eq("pricing_profile_id", profileId).order("rate_category_key", { ascending: true }).order("hazardous", { ascending: true }),
+    supabase.rpc("ttaq_vehicle_class_internal_cost_profile_summary"),
     supabase.from("standard_equipment_profiles").select("*").eq("is_active", true).order("recommendation_priority", { ascending: true })
   ]);
 
-  for (const result of [dieselResult, dieselConfigResult, settingsResult, vehicleResult, driverResult, overheadResult, marginResult, providerResult, tollProvidersResult, tollCatalogueResult, routeRiskPolicyResult, commercialRateCardResult, equipmentProfilesResult]) {
+  for (const result of [dieselResult, dieselConfigResult, settingsResult, vehicleResult, driverResult, overheadResult, marginResult, providerResult, tollProvidersResult, tollCatalogueResult, routeRiskPolicyResult, commercialRateCardResult, vehicleClassInternalCostProfilesResult, equipmentProfilesResult]) {
     if (result.error) throw result.error;
   }
 
@@ -479,6 +527,7 @@ export async function loadPricingSettings(): Promise<Record<string, unknown>> {
   const tollCatalogue = (tollCatalogueResult.data ?? []) as Array<Record<string, unknown>>;
   const routeRiskPolicy = (routeRiskPolicyResult.data ?? {}) as Record<string, unknown>;
   const commercialRateCard = (commercialRateCardResult.data ?? []) as CommercialRateCardRecord[];
+  const vehicleClassInternalCostProfiles = (vehicleClassInternalCostProfilesResult.data ?? []) as VehicleClassInternalCostProfileRecord[];
   const equipmentProfiles = (equipmentProfilesResult.data ?? []) as StandardEquipmentProfileRecord[];
   const tollProviderHealthy = tollProviders.some((row) => row.coverage_status === "complete")
     && !tollProviders.some((row) => row.coverage_status === "unavailable" || row.coverage_status === "needs_review" || row.scheduler_status === "needs_attention");
@@ -531,6 +580,7 @@ export async function loadPricingSettings(): Promise<Record<string, unknown>> {
     toll_provider_status_rows: tollProviders,
     toll_catalogue_rows: tollCatalogue,
     commercial_rate_card_rows: commercialRateCard,
+    vehicle_class_internal_cost_profiles: vehicleClassInternalCostProfiles,
     standard_equipment_profiles: equipmentProfiles,
     route_risk_categories: Array.isArray(routeRiskPolicy.categories) ? routeRiskPolicy.categories : [],
     route_risk_rules: Array.isArray(routeRiskPolicy.rules) ? routeRiskPolicy.rules : [],

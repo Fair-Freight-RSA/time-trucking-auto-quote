@@ -97,6 +97,10 @@ export interface QuoteRequest {
   pricingComponentOverrides?: PricingComponentOverrideRecord[];
   quoteDocuments?: QuoteDocumentRecord[];
   transportJob?: TransportJobRecord;
+  returnLoadStatus?: string | null;
+  returnLoadPricingStatus?: string | null;
+  returnLoadNotes?: string | null;
+  operationalJourney?: OperationalJourneySummaryRecord | null;
   createdAt: string;
 }
 
@@ -131,6 +135,12 @@ export interface QuoteRequestRecord {
   suggestion_notes: string | null;
   admin_notes: string | null;
   adjusted_price: number | null;
+  return_load_status?: string | null;
+  return_load_pricing_status?: string | null;
+  return_load_notes?: string | null;
+  commercial_billable_distance_basis?: string | null;
+  operational_review_status?: string | null;
+  operational_review_notes?: string | null;
   created_at: string;
   quote_items?: QuoteItemRecord[];
   quote_stops?: QuoteStopRecord[];
@@ -143,6 +153,35 @@ export interface QuoteRequestRecord {
   pricing_component_overrides?: PricingComponentOverrideRecord[];
   quote_documents?: QuoteDocumentRecord[];
   transport_jobs?: TransportJobRecord[];
+}
+
+export interface OperationalJourneyLegRecord {
+  leg_key: string;
+  leg_label: string;
+  origin_address?: string | null;
+  destination_address?: string | null;
+  distance_km?: number | null;
+  duration_hours?: number | null;
+  load_status?: string | null;
+  backload_status?: string | null;
+  toll_status?: string | null;
+  route_risk_status?: string | null;
+  review_status?: string | null;
+  review_reason?: string | null;
+}
+
+export interface OperationalJourneySummaryRecord {
+  depot_name?: string | null;
+  depot_address?: string | null;
+  return_load_status?: string | null;
+  return_load_pricing_status?: string | null;
+  commercial_billable_distance_basis?: string | null;
+  operational_review_status?: string | null;
+  operational_review_notes?: string | null;
+  total_operational_km?: number | null;
+  total_operational_duration_hours?: number | null;
+  commercial_treatment?: string | null;
+  legs?: OperationalJourneyLegRecord[];
 }
 
 export interface QuoteItemRecord {
@@ -277,6 +316,9 @@ export interface StandardEquipmentProfileRecord {
   suggested_toll_class?: number | null;
   suggested_toll_class_reason?: string | null;
   toll_class_review_required?: boolean | null;
+  internal_cost_vehicle_class_key?: string | null;
+  internal_cost_profile_mapping_status?: string | null;
+  internal_cost_profile_mapping_source?: string | null;
   notes: string | null;
   source_note: string | null;
 }
@@ -293,6 +335,32 @@ export interface CommercialRateCardRecord {
   source_note: string | null;
   is_active: boolean;
   updated_at: string;
+}
+
+export interface VehicleClassInternalCostComponentRecord {
+  component_key: string;
+  display_name: string;
+  unit_code: string;
+  amount: number | null;
+  value_status: string;
+  source_type: string;
+  source_basis: string;
+  is_required: boolean;
+}
+
+export interface VehicleClassInternalCostProfileRecord {
+  profile_id: string;
+  vehicle_class_key: string;
+  display_name: string;
+  effective_from: string;
+  effective_to?: string | null;
+  profile_status: string;
+  source_basis: string;
+  notes?: string | null;
+  is_active: boolean;
+  updated_at: string;
+  components: VehicleClassInternalCostComponentRecord[];
+  missing_required_components: string[];
 }
 
 export interface EquipmentOverrideHistoryEntry {
