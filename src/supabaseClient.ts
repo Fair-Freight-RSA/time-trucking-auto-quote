@@ -31,6 +31,26 @@ export async function signOutInternalUser(): Promise<void> {
   if (error) throw error;
 }
 
+export async function getCurrentAuthSession(): Promise<boolean> {
+  if (!supabase) return false;
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  return Boolean(data.session);
+}
+
+export async function updateCurrentUserPassword(password: string): Promise<void> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw error;
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const redirectTo = `${window.location.origin}${window.location.pathname.replace(/[^/]*$/, "password.html")}`;
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw error;
+}
+
 export async function hasSupabaseSession(): Promise<boolean> {
   if (!supabase) return false;
   const { data, error } = await supabase.auth.getSession();
@@ -69,6 +89,12 @@ export async function inviteInternalUser(input: {
     phone: input.phone || undefined,
     role: input.role,
     permissions: input.permissions ?? {}
+  });
+}
+
+export async function resendInternalInvitationLink(input: { email: string }): Promise<{ status: string; email: string; message?: string }> {
+  return invokeProductionIntegration("resend_internal_invitation", {
+    email: input.email
   });
 }
 

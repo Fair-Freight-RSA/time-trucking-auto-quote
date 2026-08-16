@@ -24,6 +24,7 @@ type IntegrationAction =
   | "generate_quote_pdf"
   | "generate_invoice_pdf"
   | "invite_internal_user"
+  | "resend_internal_invitation"
   | "get_quote_pdf_url"
   | "get_internal_document_url"
   | "create_upload_signed_url"
@@ -150,6 +151,7 @@ function assertAction(value: unknown): IntegrationAction {
     "generate_quote_pdf",
     "generate_invoice_pdf",
     "invite_internal_user",
+    "resend_internal_invitation",
     "get_quote_pdf_url",
     "get_internal_document_url",
     "create_upload_signed_url",
@@ -285,6 +287,15 @@ function rolePermissions(role: string, overrides: JsonMap | undefined = {}): Jso
   return { ...(defaults[role] ?? defaults.viewer), ...overrides };
 }
 
+function appRedirect(req: Request, page: string): string | undefined {
+  if (appPublicUrl) return `${appPublicUrl}/${page}`;
+  const requestOrigin = req.headers.get("origin")?.replace(/\/$/, "") ?? "";
+  const localAllowed = requestOrigin.startsWith("http://localhost:")
+    || requestOrigin.startsWith("http://127.0.0.1:");
+  if (allowedOrigins.includes(requestOrigin) || localAllowed) return `${requestOrigin}/${page}`;
+  return undefined;
+}
+
 async function inviteInternalUser(req: Request, body: JsonMap): Promise<JsonMap> {
   const { user } = await requireInternalUserManagement(req);
   const email = clean(body.email).toLowerCase();
@@ -295,7 +306,7 @@ async function inviteInternalUser(req: Request, body: JsonMap): Promise<JsonMap>
   if (!["owner", "manager", "staff", "viewer"].includes(role)) throw new Error("Choose a valid Time Trucking role.");
   if (role === "owner" && user.role !== "owner") throw new Error("Only an owner can invite another owner.");
   const permissions = rolePermissions(role, body.permissions as JsonMap | undefined);
-  const redirectTo = appPublicUrl ? `${appPublicUrl}/login.html` : undefined;
+  const redirectTo = appRedirect(req, "password.html");
 
   const { data: invitationRecord, error: invitationError } = await serviceClient
     .from("internal_user_invitations")
@@ -362,6 +373,77 @@ async function inviteInternalUser(req: Request, body: JsonMap): Promise<JsonMap>
       .eq("id", invitationRecord.id);
     throw new Error("Invitation could not be sent. Check the email address and Supabase Auth email settings.");
   }
+}
+
+async function resendInternalInvitation(req: Request, body: JsonMap): Promise<JsonMap> {
+  const { user } = await requireInternalUserManagement(req);
+  const email = clean(body.email).toLowerCase();
+  if (!isEmail(email)) throw new Error("Enter a valid email address.");
+
+  const { data: target, error: targetError } = await serviceClient
+    .from("internal_users")
+    .select("id,email,full_name,role,user_status")
+    .eq("email", email)
+    .maybeSingle();
+  if (targetError) throw new Error("Could not load this internal user.");
+  if (!target) throw new Error("No linked Time Trucking internal user exists for this email.");
+  if (target.role === "owner" && user.role !== "owner") throw new Error("Only an owner can resend an owner account link.");
+  if (target.user_status !== "active") throw new Error("Reactivate this internal user before sending a setup link.");
+
+  const redirectTo = appRedirect(req, "password.html");
+  const { error } = await serviceClient.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw new Error("Setup link could not be sent. Check the email configuration and try again.");
+
+  const invitationPayload = {
+    email,
+    full_name: target.full_name ?? null,
+    role: target.role,
+    permissions: rolePermissions(String(target.role)),
+    invitation_status: "sent",
+    auth_user_id: target.id,
+    invited_by: user.id,
+    last_sent_at: new Date().toISOString(),
+    last_error: null
+  };
+  const { data: invitationRows } = await serviceClient
+    .from("internal_user_invitations")
+    .select("id")
+    .eq("email", email)
+    .limit(1);
+
+  if (invitationRows?.length) {
+    await serviceClient
+      .from("internal_user_invitations")
+      .update({
+        full_name: invitationPayload.full_name,
+        role: invitationPayload.role,
+        permissions: invitationPayload.permissions,
+        invitation_status: invitationPayload.invitation_status,
+        auth_user_id: invitationPayload.auth_user_id,
+        invited_by: invitationPayload.invited_by,
+        last_sent_at: invitationPayload.last_sent_at,
+        last_error: null
+      })
+      .eq("id", invitationRows[0].id);
+  } else {
+    await serviceClient.from("internal_user_invitations").insert({
+      full_name: target.full_name ?? null,
+      email,
+      role: target.role,
+      permissions: rolePermissions(String(target.role)),
+      invitation_status: "sent",
+      auth_user_id: target.id,
+      invited_by: user.id,
+      last_sent_at: new Date().toISOString(),
+      last_error: null
+    });
+  }
+
+  return {
+    status: "sent",
+    email,
+    message: "A secure Time Trucking account setup link was sent. The user will create their own password."
+  };
 }
 
 async function signedUrl(bucket: string, path: string, expiresIn = 900): Promise<string> {
@@ -1467,6 +1549,10 @@ Deno.serve(async (req) => {
 
     if (action === "invite_internal_user") {
       return json(req, 200, await inviteInternalUser(req, body));
+    }
+
+    if (action === "resend_internal_invitation") {
+      return json(req, 200, await resendInternalInvitation(req, body));
     }
 
     if (action === "get_quote_pdf_url") {

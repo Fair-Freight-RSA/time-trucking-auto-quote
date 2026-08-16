@@ -9,6 +9,7 @@ import {
   autoRouteSubmittedRfq,
   createInternalRfqLink,
   generateQuotePdf,
+  getCurrentAuthSession,
   getInternalDocumentUrl,
   getPublicQuotePdfUrl,
   hasSupabaseSession,
@@ -30,7 +31,9 @@ import {
   recordPricingComponentOverride,
   recordRouteRiskOverride,
   requestQuoteRevision,
+  requestPasswordReset,
   reactivateInternalUser,
+  resendInternalInvitationLink,
   revokeInternalUser,
   refreshOfficialDieselPrice,
   saveDefaultOperatingDepot,
@@ -44,6 +47,7 @@ import {
   submitPublicQuoteDecision,
   submitPublicRfq,
   updateAdminQuote,
+  updateCurrentUserPassword,
   updateQuoteReturnLoadStatus,
   updateInternalSettings,
   updateRouteEstimateGoogle,
@@ -144,6 +148,18 @@ function isInternalPage(): boolean {
 
 function isLoginPage(): boolean {
   return document.body.dataset.page === "login";
+}
+
+function isPasswordPage(): boolean {
+  return document.body.dataset.page === "password";
+}
+
+function passwordStrengthIssue(password: string): string | null {
+  if (password.length < 10) return "Use at least 10 characters.";
+  if (!/[a-z]/.test(password)) return "Add at least one lowercase letter.";
+  if (!/[A-Z]/.test(password)) return "Add at least one uppercase letter.";
+  if (!/[0-9]/.test(password)) return "Add at least one number.";
+  return null;
 }
 
 function loginRedirectUrl(): string {
@@ -2358,13 +2374,29 @@ function renderShellActiveNav(): void {
 async function initLogin(): Promise<void> {
   if (!isLoginPage()) return;
   const form = document.querySelector<HTMLFormElement>("#loginForm");
+  const forgotForm = document.querySelector<HTMLFormElement>("#forgotPasswordForm");
   const output = document.querySelector<HTMLElement>("#loginOutput");
+  const forgotOutput = document.querySelector<HTMLElement>("#forgotPasswordOutput");
   const passwordInput = document.querySelector<HTMLInputElement>("#loginPassword");
   const showPasswordToggle = document.querySelector<HTMLInputElement>("#showPasswordToggle");
+  const forgotPasswordButton = document.querySelector<HTMLButtonElement>("#forgotPasswordButton");
+  const backToLoginButton = document.querySelector<HTMLButtonElement>("#backToLoginButton");
   if (!form || !output) return;
 
   showPasswordToggle?.addEventListener("change", () => {
     if (passwordInput) passwordInput.type = showPasswordToggle.checked ? "text" : "password";
+  });
+
+  forgotPasswordButton?.addEventListener("click", () => {
+    form.hidden = true;
+    if (forgotForm) forgotForm.hidden = false;
+    forgotOutput?.replaceChildren();
+  });
+
+  backToLoginButton?.addEventListener("click", () => {
+    if (forgotForm) forgotForm.hidden = true;
+    form.hidden = false;
+    output.replaceChildren();
   });
 
   if (!isSupabaseConfigured) {
@@ -2406,6 +2438,88 @@ async function initLogin(): Promise<void> {
       window.location.href = redirect;
     } catch (error) {
       output.innerHTML = `<strong>Login failed.</strong><span>${escapeHtml(friendlyError(error, "Invalid email or password. Please try again."))}</span>`;
+    }
+  });
+
+  forgotForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(forgotForm);
+    const email = formValue(data, "email");
+    if (!forgotOutput) return;
+    forgotOutput.innerHTML = `<strong>Sending reset link...</strong><span>Check your email for a secure Time Trucking password link.</span>`;
+    try {
+      await requestPasswordReset(email);
+      forgotOutput.innerHTML = `<strong>Reset link sent.</strong><span>Open the email link, then create your new password in the Time Trucking portal.</span>`;
+    } catch (error) {
+      forgotOutput.innerHTML = `<strong>Reset link not sent.</strong><span>${escapeHtml(friendlyError(error, "We could not send the reset email. Ask a Time Trucking Owner to check your user access."))}</span>`;
+    }
+  });
+}
+
+async function initPasswordSetup(): Promise<void> {
+  if (!isPasswordPage()) return;
+  const form = document.querySelector<HTMLFormElement>("#passwordSetupForm");
+  const output = document.querySelector<HTMLElement>("#passwordSetupOutput");
+  const passwordInput = document.querySelector<HTMLInputElement>("#newPassword");
+  const confirmInput = document.querySelector<HTMLInputElement>("#confirmPassword");
+  const showPasswordToggle = document.querySelector<HTMLInputElement>("#showSetupPasswordToggle");
+  if (!form || !output) return;
+
+  showPasswordToggle?.addEventListener("change", () => {
+    const type = showPasswordToggle.checked ? "text" : "password";
+    if (passwordInput) passwordInput.type = type;
+    if (confirmInput) confirmInput.type = type;
+  });
+
+  if (!isSupabaseConfigured) {
+    output.innerHTML = `<strong>Account setup unavailable.</strong><span>The Time Trucking app connection is not configured.</span>`;
+    form.querySelector<HTMLButtonElement>("button[type='submit']")?.setAttribute("disabled", "true");
+    return;
+  }
+
+  try {
+    if (!(await getCurrentAuthSession())) {
+      output.innerHTML = `<strong>Invitation link expired or already used.</strong><span>Ask a Time Trucking Owner to resend your account setup link, or use Forgot password from the login page.</span>`;
+    }
+  } catch (error) {
+    output.innerHTML = `<strong>Invitation link could not be opened.</strong><span>${escapeHtml(friendlyError(error, "Ask a Time Trucking Owner to resend your account setup link."))}</span>`;
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const password = formValue(data, "password");
+    const confirmPassword = formValue(data, "confirmPassword");
+    const issue = passwordStrengthIssue(password);
+    if (issue) {
+      output.innerHTML = `<strong>Password needs one more thing.</strong><span>${escapeHtml(issue)}</span>`;
+      return;
+    }
+    if (password !== confirmPassword) {
+      output.innerHTML = `<strong>Passwords do not match.</strong><span>Enter the same password in both fields.</span>`;
+      return;
+    }
+
+    output.innerHTML = `<strong>Saving password...</strong><span>Finishing your Time Trucking account setup.</span>`;
+    try {
+      await updateCurrentUserPassword(password);
+      const internalUser = await loadCurrentInternalUser();
+      if (!internalUser) {
+        await signOutInternalUser();
+        output.innerHTML = `<strong>Account password saved.</strong><span>Your login does not yet have active Time Trucking portal access. Ask an Owner to add your user.</span>`;
+        return;
+      }
+      if (internalUser.user_status !== "active") {
+        await signOutInternalUser();
+        output.innerHTML = `<strong>Access revoked.</strong><span>Your password was saved, but your Time Trucking portal access is not active. Ask an Owner to reactivate it.</span>`;
+        return;
+      }
+      output.innerHTML = `<strong>Your account is ready.</strong><span>Opening the Time Trucking portal.</span>`;
+      window.setTimeout(() => {
+        window.location.href = "./index.html";
+      }, 700);
+    } catch (error) {
+      output.innerHTML = `<strong>Password not saved.</strong><span>${escapeHtml(friendlyError(error, "This setup link may be expired or already used. Ask an Owner to resend your account setup link."))}</span>`;
     }
   });
 }
@@ -2866,6 +2980,7 @@ async function initUsersDashboard(): Promise<void> {
         <div>
           <span class="badge">${escapeHtml(user.role)}</span>
           <span class="badge">${escapeHtml(user.user_status)}</span>
+          ${canManage && user.user_status === "active" ? `<button class="small" type="button" data-resend-invite="${escapeHtml(user.email)}">Send setup link</button>` : ""}
           ${canManage && user.user_status === "active" ? `<button class="small" type="button" data-revoke-user="${escapeHtml(user.id)}">Revoke</button>` : ""}
           ${canManage && user.user_status === "revoked" ? `<button class="small" type="button" data-reactivate-user="${escapeHtml(user.id)}">Reactivate</button>` : ""}
         </div>
@@ -2880,6 +2995,17 @@ async function initUsersDashboard(): Promise<void> {
           await render();
         } catch (error) {
           output.innerHTML = `<strong>Revoke failed.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+        }
+      });
+    });
+
+    list.querySelectorAll<HTMLButtonElement>("[data-resend-invite]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          const result = await resendInternalInvitationLink({ email: button.dataset.resendInvite ?? "" });
+          output.innerHTML = `<strong>Setup link sent.</strong><span>${escapeHtml(result.message ?? "The user can create or reset their own password from the email link.")}</span>`;
+        } catch (error) {
+          output.innerHTML = `<strong>Setup link not sent.</strong><span>${escapeHtml(friendlyError(error, "Ask an Owner to check this user's access and email settings."))}</span>`;
         }
       });
     });
@@ -5250,6 +5376,34 @@ function initHelp(): void {
     {
       title: "VAT",
       text: "South African VAT is configured as a source-backed pricing setting and should be changed only when the official authority rate changes."
+    },
+    {
+      title: "How do I accept my invitation?",
+      text: "Open the Time Trucking invitation email and choose Accept invitation. The link opens the Time Trucking password page, where you create your own password."
+    },
+    {
+      title: "How do I create my password?",
+      text: "Use the Create your password page from your invitation or reset email. Owners and managers never choose or see another user's password."
+    },
+    {
+      title: "How do I log in?",
+      text: "Open the internal login page, enter your email and password, and the portal checks that your Time Trucking access record is active."
+    },
+    {
+      title: "I forgot my password",
+      text: "Use Forgot password on the login page. The email link opens the Time Trucking password page so you can set a new password."
+    },
+    {
+      title: "My invitation expired",
+      text: "Ask a Time Trucking Owner to open Users & Access and send a new setup link. Expired links do not expose account details."
+    },
+    {
+      title: "I did not receive my invitation",
+      text: "Check spam first. If it is missing, an Owner can resend a setup link from Users & Access without recreating your account."
+    },
+    {
+      title: "How does an Owner resend an invitation?",
+      text: "Open Users & Access, find the user, and choose Send setup link. The user receives a secure email and creates their own password."
     }
   ];
 
@@ -5267,6 +5421,7 @@ function initHelp(): void {
 
 async function bootstrap(): Promise<void> {
   await initLogin();
+  await initPasswordSetup();
 
   if (!(await requireInternalAccess())) {
     if (!isInternalPage()) {

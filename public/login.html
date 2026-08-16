@@ -27,8 +27,20 @@
           </label>
           <label class="checkbox"><input id="showPasswordToggle" type="checkbox" /> Show password</label>
           <button class="primary" type="submit">Sign in</button>
+          <button class="button small" type="button" id="forgotPasswordButton">Forgot password?</button>
           <output id="loginOutput"></output>
           <p class="muted">Public RFQ and customer quote links do not require login.</p>
+        </form>
+        <form class="card login-card" id="forgotPasswordForm" hidden>
+          <div class="card-heading"><h2>Reset password</h2><span>Secure email link</span></div>
+          <label>Email
+            <input name="email" type="email" autocomplete="email" required placeholder="you@timetrucking.co.za" />
+          </label>
+          <div class="button-row">
+            <button class="primary" type="submit">Send reset link</button>
+            <button class="button small" type="button" id="backToLoginButton">Back to login</button>
+          </div>
+          <output id="forgotPasswordOutput"></output>
         </form>
       </main>
     </div>

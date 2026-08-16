@@ -93,6 +93,7 @@ test("final polish keeps customer and manager UI premium and nontechnical", () =
   const styles = read("public/styles.css");
   const login = read("public/login.html");
   const users = read("public/users-dashboard.html");
+  const password = read("public/password.html");
 
   assert.ok(app.includes("refreshEquipmentAndPricing"), "equipment override should refresh quote review pricing in place");
   assert.ok(app.includes("Price updated."), "equipment override should confirm repriced selections");
@@ -102,11 +103,63 @@ test("final polish keeps customer and manager UI premium and nontechnical", () =
   assert.ok(styles.includes(".price-hero"), "pricing hero styles should be present");
   assert.ok(styles.includes(".skeleton-card"), "premium loading skeletons should be present");
   assert.ok(login.includes("showPasswordToggle"), "login should support a show-password control");
+  assert.ok(login.includes("Forgot password?"), "login should provide a forgot-password flow");
+  assert.ok(password.includes("Create your password"), "invited users should have a first-password page");
+  assert.ok(password.includes("Welcome to Time Trucking Auto-Quote"), "password setup should be branded for Time Trucking");
   assert.equal(login.includes("Supabase Auth"), false, "login page should avoid backend-provider jargon");
+  assert.equal(password.includes("Supabase Auth"), false, "password setup page should avoid backend-provider jargon");
   assert.equal(users.includes("Supabase Auth user ID"), false, "users page should avoid backend-provider jargon");
   assert.equal(users.includes("User UUID"), false, "users page must not ask managers for backend UUIDs");
   assert.ok(users.includes("Invite User"), "users page should use the secure invitation flow");
   assert.ok(users.includes("No Supabase dashboard or UUID required"), "users page should explain UUID-free user creation");
+});
+
+test("invitation and password lifecycle stays branded, self-service, and Supabase Auth managed", () => {
+  const app = read("src/app.ts");
+  const client = read("src/supabaseClient.ts");
+  const edge = read("supabase/functions/production-integrations/index.ts");
+  const login = read("public/login.html");
+  const password = read("public/password.html");
+
+  for (const expected of [
+    "password.html",
+    "resend_internal_invitation",
+    "resetPasswordForEmail",
+    "requireInternalUserManagement",
+    "Only an owner can resend an owner account link",
+    "The user will create their own password"
+  ]) {
+    assert.ok(edge.includes(expected), `Edge invite lifecycle should include ${expected}`);
+  }
+
+  for (const expected of [
+    "requestPasswordReset",
+    "updateCurrentUserPassword",
+    "getCurrentAuthSession",
+    "passwordStrengthIssue",
+    "Invitation link expired or already used",
+    "Your account is ready",
+    "resendInternalInvitationLink",
+    "Send setup link",
+    "Forgot password?"
+  ]) {
+    assert.ok(app.includes(expected) || client.includes(expected) || login.includes(expected), `auth lifecycle implementation should include ${expected}`);
+  }
+
+  for (const expected of [
+    "How do I accept my invitation?",
+    "How do I create my password?",
+    "I forgot my password",
+    "My invitation expired",
+    "I did not receive my invitation",
+    "How does an Owner resend an invitation?"
+  ]) {
+    assert.ok(app.includes(expected), `Help assistant content should include ${expected}`);
+  }
+
+  assert.ok(password.includes("autocomplete=\"new-password\""), "password setup should use new-password autocomplete");
+  assert.equal((client + app).includes("SUPABASE_SERVICE_ROLE_KEY"), false, "browser code must not expose service role");
+  assert.equal((client + app).includes("auth.admin"), false, "browser code must not use admin auth APIs");
 });
 
 test("final production hardening adds secure invitations, depot journey review, manual external-cost controls, and concise help", () => {
