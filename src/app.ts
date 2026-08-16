@@ -20,14 +20,19 @@ import {
   loadAdminQuoteRequests,
   loadCustomerPortal,
   loadInternalQuoteDocument,
+  loadPricingSettings,
   loadPublicQuoteDocument,
   loadPublicQuoteResponse,
   loadInternalSettings,
   recordPricingAdjustment,
   recordPricingComponentOverride,
+  recordRouteRiskOverride,
   requestQuoteRevision,
   reactivateInternalUser,
   revokeInternalUser,
+  refreshOfficialDieselPrice,
+  saveCommercialRateCard,
+  saveCommercialPricingSettings,
   savePricingSettings,
   saveInternalUser,
   sendQuoteEmail,
@@ -42,6 +47,7 @@ import {
 } from "./supabaseClient";
 import type {
   CargoCategory,
+  CommercialRateCardRecord,
   CustomerPortalRecord,
   InternalSettingsPayload,
   InternalUserRecord,
@@ -1182,6 +1188,415 @@ function dynamicValue(source: Record<string, unknown> | undefined, key: string, 
   return String(source[key]);
 }
 
+type PricingAuditRow = {
+  component: string;
+  input: string;
+  unit: string;
+  formula: string;
+  multiplier: string;
+  source: string;
+  classification: string;
+  effective: string;
+  fallback: string;
+  contribution: number;
+  warning?: string;
+};
+
+const timeTruckingDefaultAxles: Array<{ label: string; axles: number; aliases: string[] }> = [
+  { label: "1 Ton", axles: 2, aliases: ["1 ton", "1t", "1-ton"] },
+  { label: "1.8 Ton", axles: 4, aliases: ["1.8 ton", "1.8t", "1.8-ton"] },
+  { label: "3 Ton", axles: 2, aliases: ["3 ton", "3t", "3-ton"] },
+  { label: "5 Ton", axles: 2, aliases: ["5 ton", "5t", "5-ton"] },
+  { label: "8 Ton", axles: 2, aliases: ["8 ton", "8t", "8-ton"] },
+  { label: "12 Ton", axles: 3, aliases: ["12 ton", "12t", "12-ton"] },
+  { label: "Semi", axles: 9, aliases: ["semi"] },
+  { label: "S/L", axles: 10, aliases: ["s/l", "superlink", "super link"] }
+];
+
+function numeric(value: unknown, fallback = 0): number {
+  const result = Number(value);
+  return Number.isFinite(result) ? result : fallback;
+}
+
+function formatAuditValue(value: unknown, fallback = "Not available"): string {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return formatNumber(value, 4);
+  if (Array.isArray(value)) return `${value.length} item(s)`;
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function findBreakdown(breakdowns: PricingBreakdownRecord[], lineKey: string): PricingBreakdownRecord | undefined {
+  return breakdowns.find((line) => line.line_key === lineKey);
+}
+
+function tollClassSourceText(tollSource: Record<string, unknown> | undefined): string {
+  const source = dynamicValue(tollSource, "toll_class_source", "unconfigured");
+  return humanizeKey(source);
+}
+
+function defaultAxleConfigForVehicle(vehicleName: string): { label: string; axles: number } | null {
+  const normalized = vehicleName.toLowerCase();
+  const match = timeTruckingDefaultAxles.find((entry) => entry.aliases.some((alias) => normalized.includes(alias)));
+  return match ? { label: match.label, axles: match.axles } : null;
+}
+
+function auditClassification(lineKey: string, source: string): string {
+  if (source.toLowerCase().includes("official") || source.toLowerCase().includes("google") || source.toLowerCase().includes("dmpr")) return "Automatically sourced externally";
+  if (source.toLowerCase().includes("admin") || source.toLowerCase().includes("configured") || source.toLowerCase().includes("pricing_settings")) return "Admin configured";
+  if (source.toLowerCase().includes("rate card") || ["additional_stops", "driver"].includes(lineKey)) return "Time Trucking rate card";
+  if (source.toLowerCase().includes("customer")) return "Customer-specific";
+  if (source.toLowerCase().includes("hardcoded")) return "Hardcoded";
+  return "System calculated";
+}
+
+function pricingAuditWarnings(input: {
+  calculation: PricingCalculationRecord;
+  breakdowns: PricingBreakdownRecord[];
+  sourceSnapshot: Record<string, unknown>;
+  dynamicOutputs: Record<string, unknown>;
+  request: QuoteRequest;
+  auditRows: PricingAuditRow[];
+}): string[] {
+  const warnings = new Set<string>();
+  const automationStatus = input.calculation.automation_status ?? {};
+  const diesel = input.sourceSnapshot.diesel as Record<string, unknown> | undefined;
+  const tolls = input.sourceSnapshot.tolls as Record<string, unknown> | undefined;
+  const routeRisk = (input.sourceSnapshot.route_risk ?? input.sourceSnapshot.routeRisk) as Record<string, unknown> | undefined;
+  const driverLine = findBreakdown(input.breakdowns, "driver");
+  const estimatedHourlyDriver = numeric(input.calculation.estimated_duration_hours) * Math.max(1, numeric(input.dynamicOutputs.vehicle_dependent_costs_multiplier, input.request.vehicleRecommendation?.number_of_trucks ?? 1)) * numeric(driverLine?.unit_rate);
+  const overnightAmount = Math.max(0, numeric(driverLine?.amount) - estimatedHourlyDriver);
+  const nightOutCount = Math.floor(numeric(input.calculation.estimated_duration_hours) / 24) * Math.max(1, numeric(input.dynamicOutputs.vehicle_dependent_costs_multiplier, input.request.vehicleRecommendation?.number_of_trucks ?? 1));
+  const nightOutRate = nightOutCount > 0 ? overnightAmount / nightOutCount : 0;
+  const hasDangerousGoods = (input.request.items ?? []).some((item) => item.dangerous_goods || item.cargo_category === "dangerous_goods");
+  const hazmatLine = findBreakdown(input.breakdowns, "hazmat");
+
+  for (const [key, value] of Object.entries(automationStatus)) {
+    if (value === true) warnings.add(`Automation flag: ${humanizeKey(key)}.`);
+  }
+  if (dynamicValue(diesel, "review_warning", "") || numeric(input.calculation.fuel_price_per_litre) <= 0) warnings.add("Diesel source requires review or has no positive current value.");
+  if (dynamicValue(tolls, "source", "").includes("manual") || dynamicValue(tolls, "status", "").includes("unknown")) warnings.add("Toll amount relies on review/fallback path.");
+  if (dynamicValue(routeRisk, "status", "") === "unknown_geometry_required") warnings.add("Route-risk geometry was unavailable and requires review.");
+  if (nightOutCount > 0 && Math.abs(nightOutRate - 1750) > 0.01) warnings.add(`Night-out rate differs from Henning-confirmed R1,750. Current stored rate calculates as ${money(nightOutRate, input.calculation.currency)}.`);
+  if (nightOutCount === 0 && overnightAmount > 0.01) warnings.add("Driver line includes overnight amount even though calculated night-out count is zero.");
+  if (hasDangerousGoods && numeric(hazmatLine?.amount) > 0) warnings.add("Dangerous goods also triggered a separate hazmat surcharge; verify this is not double-counted against HAZ rate-card pricing.");
+  if (numeric(input.calculation.margin_percent) > 0 || numeric(input.calculation.profit_amount) > 0) warnings.add("Profit/minimum-profit protection changes the selling price; verify Henning's 10% rule is not duplicating profit already embedded in commercial rates.");
+  if (String(input.calculation.rule_version ?? "").includes("commercial-rate-card")) {
+    if (automationStatus.day_vs_km_rule_requires_confirmation) warnings.add("DAY VS KM PRICING RULE REQUIRES HENNING CONFIRMATION.");
+    if (automationStatus.diesel_selling_adjustment_requires_rule) warnings.add("Diesel selling-price adjustment is pending an approved Time Trucking formula.");
+    if (automationStatus.night_out_count_requires_confirmation) warnings.add("Night-out count requires approved trip rule or manual internal confirmation.");
+    if (automationStatus.ten_percent_protection_requires_confirmation) warnings.add("10% protection is pending exact Time Trucking definition and is not added automatically.");
+  }
+  for (const row of input.auditRows) {
+    if (row.source === "Source not captured" || row.formula === "Formula not captured") warnings.add(`Missing source/formula detail for ${row.component}.`);
+    if (row.warning) warnings.add(row.warning);
+  }
+  return [...warnings];
+}
+
+function buildPricingAuditRows(request: QuoteRequest): PricingAuditRow[] {
+  const calculation = request.pricingCalculation;
+  if (!calculation) return [];
+  const breakdowns = request.pricingBreakdowns ?? [];
+  const dynamicOutputs = calculation.dynamic_outputs ?? {};
+  const sourceSnapshot = calculation.pricing_source_snapshot ?? calculation.dynamic_inputs ?? {};
+  const diesel = sourceSnapshot.diesel as Record<string, unknown> | undefined;
+  const route = sourceSnapshot.route as Record<string, unknown> | undefined;
+  const tolls = sourceSnapshot.tolls as Record<string, unknown> | undefined;
+  const routeRisk = (sourceSnapshot.route_risk ?? sourceSnapshot.routeRisk) as Record<string, unknown> | undefined;
+  const season = sourceSnapshot.season as Record<string, unknown> | undefined;
+  const equipment = sourceSnapshot.equipment as Record<string, unknown> | undefined;
+  const unitCount = Math.max(1, numeric(dynamicOutputs.vehicle_dependent_costs_multiplier, request.vehicleRecommendation?.number_of_trucks ?? 1));
+  const distance = numeric(calculation.estimated_distance_km);
+  const duration = numeric(calculation.estimated_duration_hours);
+  const fuelPrice = numeric(calculation.fuel_price_per_litre);
+  const fuelLine = findBreakdown(breakdowns, "fuel");
+  const driverLine = findBreakdown(breakdowns, "driver");
+  const hourlyDriverAmount = numeric(driverLine?.quantity) * numeric(driverLine?.unit_rate);
+  const nightOutAmount = Math.max(0, numeric(driverLine?.amount) - hourlyDriverAmount);
+  const nightOutCount = Math.floor(duration / 24) * unitCount;
+  const nightOutRate = nightOutCount > 0 ? nightOutAmount / nightOutCount : 0;
+  const fuelConsumption = distance > 0 && unitCount > 0 && fuelPrice > 0
+    ? (numeric(fuelLine?.amount) / (distance * unitCount * fuelPrice)) * 100
+    : 0;
+  const rows: PricingAuditRow[] = [];
+  const addLine = (lineKey: string, fallbackSource: string, formula: (line: PricingBreakdownRecord) => string, multiplier = "1") => {
+    const line = findBreakdown(breakdowns, lineKey);
+    if (!line) return;
+    const source = fallbackSource;
+    rows.push({
+      component: line.line_label,
+      input: formatNumber(line.quantity, 4),
+      unit: lineKey === "fuel_surcharge" || lineKey === "profit" || lineKey === "vat" ? "Base amount" : "Quantity",
+      formula: formula(line),
+      multiplier,
+      source,
+      classification: auditClassification(lineKey, source),
+      effective: "Quote calculation timestamp",
+      fallback: line.explanation ?? "No fallback recorded",
+      contribution: numeric(line.amount)
+    });
+  };
+
+  rows.push({
+    component: "Vehicle / equipment",
+    input: dynamicValue(equipment, "selected_equipment", request.vehicleRecommendation?.recommended_vehicle_type ?? "To be confirmed"),
+    unit: `${unitCount} unit(s)`,
+    formula: "Vehicle recommendation selects the pricing equipment profile before operating costs are calculated.",
+    multiplier: formatNumber(unitCount, 0),
+    source: dynamicValue(equipment, "equipment_source", request.vehicleRecommendation?.equipment_source ?? "system recommendation"),
+    classification: "System calculated",
+    effective: calculation.calculation_timestamp,
+    fallback: request.vehicleRecommendation?.override_reason ? `Manager override: ${request.vehicleRecommendation.override_reason}` : "System equipment recommendation used.",
+    contribution: 0
+  });
+
+  rows.push({
+    component: "Route distance and duration",
+    input: `${formatDistanceKm(distance)} / ${formatDurationHours(duration)}`,
+    unit: "km / hours",
+    formula: "Route distance feeds distance-based costs; duration feeds driver and night-out logic.",
+    multiplier: "1",
+    source: `${dynamicValue(route, "source", request.routeEstimate?.provider_name ?? "Manual or unavailable")} / ${dynamicValue(route, "provider_status", request.routeEstimate?.provider_status ?? "unknown")}`,
+    classification: dynamicValue(route, "source", "").toLowerCase().includes("google") ? "Automatically sourced externally" : "Manager review/override only",
+    effective: dynamicValue(route, "calculated_at", request.routeEstimate?.estimated_at ?? "Not captured"),
+    fallback: request.routeEstimate?.manual_distance_km || request.routeEstimate?.manual_duration_hours ? "Manual route override/fallback used." : "Latest stored route estimate used.",
+    contribution: 0
+  });
+
+  addLine("fuel", dynamicValue(diesel, "source_label", "Diesel source snapshot"), () =>
+    `${formatDistanceKm(distance)} x ${formatNumber(unitCount, 0)} unit(s) x ${formatNumber(fuelConsumption, 4)} L/100km x ${money(fuelPrice, calculation.currency)}/L = ${money(numeric(fuelLine?.amount), calculation.currency)}`,
+    `${formatNumber(fuelConsumption, 4)} L/100km`
+  );
+  addLine("fuel_surcharge", "Admin pricing configuration: diesel_base_price_per_litre and fuel_surcharge_enabled", (line) =>
+    `${money(numeric(fuelLine?.amount), calculation.currency)} x ${formatNumber(numeric(line.unit_rate), 4)}% = ${money(line.amount, calculation.currency)}`,
+    `${formatNumber(numeric(findBreakdown(breakdowns, "fuel_surcharge")?.unit_rate), 4)}%`
+  );
+  for (const key of ["tyres", "maintenance", "insurance", "depreciation"]) {
+    addLine(key, "Time Trucking equipment cost assumptions / admin pricing configuration", (line) =>
+      `${formatNumber(line.quantity, 4)} km-units x ${money(line.unit_rate, calculation.currency)} = ${money(line.amount, calculation.currency)}`,
+      money(numeric(findBreakdown(breakdowns, key)?.unit_rate), calculation.currency)
+    );
+  }
+  addLine("driver", "Admin pricing configuration: driver_costs.driver_hourly_wage plus overnight allowance", (line) =>
+    `${formatNumber(line.quantity, 4)} driver hour-unit(s) x ${money(line.unit_rate, calculation.currency)} + ${money(nightOutAmount, calculation.currency)} night-out allowance = ${money(line.amount, calculation.currency)}`,
+    money(numeric(driverLine?.unit_rate), calculation.currency)
+  );
+  rows.push({
+    component: "Night out allowance",
+    input: `${nightOutCount} night out(s)`,
+    unit: "night",
+    formula: `${nightOutCount} x ${money(nightOutRate || 1750, calculation.currency)} = ${money(nightOutAmount, calculation.currency)}`,
+    multiplier: money(nightOutRate || 1750, calculation.currency),
+    source: "Time Trucking rate card / Henning confirmed rule; current implementation stores this inside the Driver line",
+    classification: "Time Trucking rate card",
+    effective: "Henning clarified default R1,750; stored calculation uses driver_overnight_allowance",
+    fallback: nightOutCount > 0 ? "Calculated from floor(route duration / 24) x vehicle unit count." : "No night out applied by current duration rule.",
+    contribution: nightOutAmount,
+    warning: nightOutCount > 0 && Math.abs((nightOutRate || 0) - 1750) > 0.01 ? "Current stored overnight rate differs from R1,750." : undefined
+  });
+  for (const key of ["additional_stops", "cross_border", "escort", "permit", "hazmat", "refrigeration", "crane", "forklift", "high_value"]) {
+    addLine(key, key === "additional_stops" ? "Time Trucking rate card / admin setting additional_stop_rate" : "Admin pricing configuration / vehicle requirement flags", (line) =>
+      `${formatNumber(line.quantity, 4)} x ${money(line.unit_rate, calculation.currency)} = ${money(line.amount, calculation.currency)}`,
+      money(numeric(findBreakdown(breakdowns, key)?.unit_rate), calculation.currency)
+    );
+  }
+  addLine("tolls", dynamicValue(tolls, "source", "Official toll engine / fallback"), (line) =>
+    `${formatNumber(line.quantity, 4)} toll match count/distance basis x ${money(line.unit_rate, calculation.currency)} = ${money(line.amount, calculation.currency)}`,
+    tollClassSourceText(tolls)
+  );
+  addLine("route_risk", dynamicValue(routeRisk, "source", "Time Trucking configured policy"), (line) =>
+    `${money(line.quantity, calculation.currency)} risk base x ${formatNumber(line.unit_rate, 4)}% + fixed rule = ${money(line.amount, calculation.currency)}`,
+    `${formatNumber(numeric(findBreakdown(breakdowns, "route_risk")?.unit_rate), 4)}%`
+  );
+  addLine("seasonal_multiplier", "Admin seasonal calendar selected by collection date", (line) =>
+    `${money(line.quantity, calculation.currency)} x (${formatNumber(numeric(line.unit_rate), 4)} - 1) = ${money(line.amount, calculation.currency)}`,
+    `${formatNumber(numeric(season?.multiplier ?? calculation.seasonal_multiplier ?? 1), 4)}x`
+  );
+  addLine("overhead", "Admin pricing configuration: company_overheads.admin_overhead_percent plus vehicle overhead", (line) =>
+    `${money(line.quantity, calculation.currency)} x ${formatNumber(line.unit_rate, 4)}% plus vehicle overhead already in operating costs = ${money(line.amount, calculation.currency)}`,
+    `${formatNumber(numeric(findBreakdown(breakdowns, "overhead")?.unit_rate), 4)}%`
+  );
+  addLine("profit", "Admin margin profile / minimum profit protection", (line) =>
+    `greatest(${money(line.quantity, calculation.currency)} x ${formatNumber(line.unit_rate, 4)}%, configured minimum profit) = ${money(line.amount, calculation.currency)}`,
+    `${formatNumber(numeric(findBreakdown(breakdowns, "profit")?.unit_rate), 4)}%`
+  );
+  addLine("vat", "Admin pricing configuration: company_overheads.vat_percent", (line) =>
+    `${money(line.quantity, calculation.currency)} x ${formatNumber(line.unit_rate, 4)}% = ${money(line.amount, calculation.currency)}`,
+    `${formatNumber(numeric(findBreakdown(breakdowns, "vat")?.unit_rate), 4)}%`
+  );
+  rows.push({
+    component: "Final recommended selling price",
+    input: money(calculation.subtotal + calculation.profit_amount + calculation.vat_amount, calculation.currency),
+    unit: calculation.currency,
+    formula: `${money(calculation.subtotal, calculation.currency)} subtotal + ${money(calculation.profit_amount, calculation.currency)} profit + ${money(calculation.vat_amount, calculation.currency)} VAT = ${money(calculation.recommended_selling_price, calculation.currency)}`,
+    multiplier: "Minimum selling price floor may apply",
+    source: "System calculated from stored pricing_calculations row",
+    classification: "System calculated",
+    effective: calculation.calculation_timestamp,
+    fallback: calculation.recommended_selling_price !== calculation.grand_total ? "Final selling price differs from grand total; check minimum floor/override path." : "No final-price fallback recorded.",
+    contribution: calculation.recommended_selling_price
+  });
+  return rows;
+}
+
+function renderPricingAuditView(request: QuoteRequest, calculation: PricingCalculationRecord, breakdowns: PricingBreakdownRecord[]): string {
+  const dynamicOutputs = calculation.dynamic_outputs ?? {};
+  const sourceSnapshot = calculation.pricing_source_snapshot ?? calculation.dynamic_inputs ?? {};
+  const diesel = sourceSnapshot.diesel as Record<string, unknown> | undefined;
+  const tolls = sourceSnapshot.tolls as Record<string, unknown> | undefined;
+  const routeRisk = (sourceSnapshot.route_risk ?? sourceSnapshot.routeRisk) as Record<string, unknown> | undefined;
+  const commercial = sourceSnapshot.commercial as Record<string, unknown> | undefined;
+  const equipment = sourceSnapshot.equipment as Record<string, unknown> | undefined;
+  const vehicleName = dynamicValue(equipment, "selected_equipment", request.vehicleRecommendation?.recommended_vehicle_type ?? "");
+  const defaultAxles = defaultAxleConfigForVehicle(vehicleName);
+  const tollPlazas = Array.isArray(tolls?.plazas) ? tolls.plazas as Record<string, unknown>[] : [];
+  const auditRows = buildPricingAuditRows(request);
+  const warnings = pricingAuditWarnings({ calculation, breakdowns, sourceSnapshot, dynamicOutputs, request, auditRows });
+  const isCommercialRateCard = String(calculation.rule_version ?? "").includes("commercial-rate-card");
+  const commercialLineKeys = new Set(["commercial_per_km_scenario", "commercial_per_day_scenario", "commercial_base", "diesel_selling_adjustment"]);
+  const tripChargeLineKeys = new Set(["additional_stops", "night_out", "cross_border", "tolls", "route_risk", "seasonal_multiplier", "escort", "permit", "hazmat", "refrigeration", "crane", "forklift", "high_value", "overhead", "profit", "vat"]);
+  const commercialLines = breakdowns.filter((line) => commercialLineKeys.has(line.line_key));
+  const tripChargeLines = breakdowns.filter((line) => tripChargeLineKeys.has(line.line_key));
+  const internalCostLines = breakdowns.filter((line) => line.line_key.startsWith("internal_"));
+  const renderBreakdownTable = (lines: PricingBreakdownRecord[], emptyLabel: string) => lines.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Line</th><th>Input</th><th>Multiplier/rate</th><th>Formula/source</th><th>Result</th></tr></thead><tbody>${lines.map((line) => `<tr><td>${escapeHtml(line.line_label)}</td><td>${formatNumber(line.quantity, 4)}</td><td>${money(line.unit_rate, calculation.currency)}</td><td>${escapeHtml(line.explanation ?? "No explanation captured")}</td><td>${money(line.amount, calculation.currency)}</td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="muted">${escapeHtml(emptyLabel)}</p>`;
+  const formulaSequence = [
+    ...(isCommercialRateCard
+      ? [
+          "Commercial base: Time Trucking rate-card per-km scenario and per-day scenario are both calculated",
+          "Selected commercial base: configurable day-vs-km rule; pending Henning confirmation defaults to review-required",
+          "Approved diesel selling adjustment if configured; currently pending approved formula",
+          "Approved external/trip charges: tolls + additional stops + night-out + cross-border + route risk + seasonal + special requirements",
+          "VAT on commercial subtotal",
+          "Internal operating cost analysis is calculated separately and does not alter customer selling price"
+        ]
+      : [
+          "Operating costs: fuel + tyres + maintenance + insurance + depreciation + driver + vehicle overhead",
+          "Requirement charges: escort + permit + hazmat + refrigeration + crane + forklift + high-value + additional stops + cross-border",
+          "Official/fallback toll amount",
+          "Route-risk policy or review state",
+          "Seasonal multiplier on pre-seasonal base",
+          "Company admin overhead",
+          "Profit/minimum profit",
+          "VAT",
+          "Minimum selling-price floor"
+        ])
+  ];
+
+  return `
+    <details class="detail-disclosure pricing-audit-view" open>
+      <summary>Calculation Breakdown / Pricing Audit</summary>
+      <div class="summary-block">
+        <h3>Warnings and review flags</h3>
+        <div class="flag-row">
+          ${warnings.length ? warnings.map((warning) => `<span class="flag warning">${escapeHtml(warning)}</span>`).join("") : `<span class="flag info">No audit warnings generated from stored pricing data</span>`}
+        </div>
+      </div>
+      <div class="summary-block">
+        <h3>Actual calculation order</h3>
+        <ol class="compact-list">${formulaSequence.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+        <p class="muted">This order reflects the deployed pricing function and finalisation trigger for this quote.</p>
+      </div>
+      ${isCommercialRateCard ? `
+      <div class="summary-block">
+        <h3>A. Commercial Selling Price</h3>
+        <div class="grid three">
+          <p><strong>Rate card category</strong><span>${escapeHtml(dynamicValue(commercial, "rate_display_name", dynamicValue(equipment, "rate_category_key", "Mapping requires review")))}</span></p>
+          <p><strong>Normal profit</strong><span>${escapeHtml(dynamicValue(commercial, "normal_profit", "Included in Henning commercial rate"))}</span></p>
+          <p><strong>10% protection</strong><span>${escapeHtml(dynamicValue(commercial, "ten_percent_protection", "Pending exact Time Trucking definition"))}</span></p>
+        </div>
+        ${renderBreakdownTable(commercialLines, "No commercial rate-card lines were stored for this calculation.")}
+      </div>
+      <div class="summary-block">
+        <h3>B. External/Trip Charges</h3>
+        ${renderBreakdownTable(tripChargeLines, "No external/trip charge lines were stored for this calculation.")}
+      </div>
+      <div class="summary-block">
+        <h3>C. Internal Estimated Operating Cost</h3>
+        <p class="muted">Internal costs are retained for profitability analysis only. They do not automatically increase the customer selling price.</p>
+        ${renderBreakdownTable(internalCostLines, "No internal operating-cost lines were stored for this calculation.")}
+      </div>
+      <div class="summary-block">
+        <h3>D. Profitability Analysis</h3>
+        <div class="grid three">
+          <p><strong>Commercial subtotal</strong><span>${money(calculation.subtotal, calculation.currency)}</span></p>
+          <p><strong>Estimated internal cost</strong><span>${money(numeric(dynamicOutputs.estimated_internal_operating_cost), calculation.currency)}</span></p>
+          <p><strong>Estimated contribution</strong><span>${money(numeric(dynamicOutputs.estimated_contribution_before_vat), calculation.currency)}</span></p>
+        </div>
+      </div>
+      <div class="summary-block">
+        <h3>F. Warnings / Pending Rules</h3>
+        <div class="flag-row">
+          <span class="flag warning">DAY VS KM PRICING RULE REQUIRES HENNING CONFIRMATION</span>
+          <span class="flag warning">Diesel adjustment formula pending approved rule</span>
+          <span class="flag warning">Night-out trigger/count pending approved rule or manual confirmation</span>
+          <span class="flag warning">10% protection pending exact definition</span>
+        </div>
+      </div>` : ""}
+      <div class="summary-block">
+        <h3>Toll classification audit</h3>
+        <div class="grid three">
+          <p><strong>Vehicle type</strong><span>${escapeHtml(vehicleName || "Not captured")}</span></p>
+          <p><strong>Default axle count</strong><span>${defaultAxles ? `${defaultAxles.axles} axles (${defaultAxles.label})` : "No matching Time Trucking default axle category captured"}</span></p>
+          <p><strong>Toll class selected</strong><span>${escapeHtml(formatAuditValue(tolls?.toll_class, "Review required"))}</span></p>
+          <p><strong>Selection reason</strong><span>${escapeHtml(dynamicValue(tolls?.equipment as Record<string, unknown> | undefined, "suggested_toll_class_reason", dynamicValue(tolls, "toll_class_source", "Toll class source not captured")))}</span></p>
+          <p><strong>Operator/source</strong><span>${escapeHtml(dynamicValue(tolls, "source", "Manual review required"))}</span></p>
+          <p><strong>Effective basis</strong><span>${escapeHtml(dynamicValue(tolls, "status", "Unknown"))}</span></p>
+        </div>
+        ${tollPlazas.length ? `<div class="table-wrap"><table><thead><tr><th>Operator</th><th>Plaza</th><th>Tariff</th><th>Effective</th><th>Source</th><th>Amount</th></tr></thead><tbody>${tollPlazas.map((plaza) => `<tr><td>${escapeHtml(String(plaza.operator_key ?? "Unknown"))}</td><td>${escapeHtml(String(plaza.plaza_name ?? "Toll plaza"))}</td><td>${escapeHtml(String(plaza.tariff_id ?? "Tariff row"))}</td><td>${escapeHtml(String(plaza.effective_from ?? "Not captured"))}</td><td>${escapeHtml(String(plaza.source_publication ?? plaza.source ?? "Official tariff"))}</td><td>${money(numeric(plaza.amount), calculation.currency)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No toll plaza tariff rows were attached to this calculation.</p>`}
+      </div>
+      <div class="summary-block">
+        <h3>${isCommercialRateCard ? "E. Data Sources / Technical Audit" : "Diesel audit"}</h3>
+        <div class="grid three">
+          <p><strong>Diesel grade</strong><span>${escapeHtml(dynamicValue(diesel, "diesel_grade", dynamicValue(diesel, "preferred_diesel_grade", "0.005% sulphur diesel expected")))}</span></p>
+          <p><strong>Reference diesel</strong><span>${money(numeric(diesel?.reference_price_per_litre ?? diesel?.official_reference_price_per_litre ?? diesel?.configured_adjustment_value), calculation.currency)} / L</span></p>
+          <p><strong>Current diesel</strong><span>${money(calculation.fuel_price_per_litre ?? numeric(diesel?.effective_diesel_price_per_litre), calculation.currency)} / L</span></p>
+          <p><strong>Variance</strong><span>${money(numeric(diesel?.variance_amount_per_litre), calculation.currency)} / L (${formatNumber(numeric(diesel?.variance_percent), 4)}%)</span></p>
+          <p><strong>Selling-price diesel adjustment</strong><span>${escapeHtml(dynamicValue(diesel, "selling_price_diesel_adjustment_status", "Pending approved rule"))} / ${money(numeric(diesel?.selling_price_diesel_adjustment), calculation.currency)}</span></p>
+          <p><strong>Source</strong><span>${escapeHtml(dynamicValue(diesel, "provider_name", dynamicValue(diesel, "source_label", "Manual / live provider not configured")))}</span></p>
+          <p><strong>Effective date</strong><span>${escapeHtml(dynamicValue(diesel, "publication_date", dynamicValue(diesel, "effective_from", "Not captured")))}</span></p>
+          <p><strong>Retrieved</strong><span>${escapeHtml(dynamicValue(diesel, "last_successfully_checked", dynamicValue(diesel, "retrieved_at", "Not captured")))}</span></p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Component</th><th>Input</th><th>Unit</th><th>Formula</th><th>Multiplier</th><th>Source / class</th><th>Effective / fallback</th><th>Contribution</th></tr></thead>
+          <tbody>
+            ${auditRows.filter((row) => Math.abs(row.contribution) > 0.005 || ["Vehicle / equipment", "Route distance and duration", "Night out allowance", "Final recommended selling price"].includes(row.component)).map((row) => `
+              <tr>
+                <td>${escapeHtml(row.component)}</td>
+                <td>${escapeHtml(row.input)}</td>
+                <td>${escapeHtml(row.unit)}</td>
+                <td>${escapeHtml(row.formula)}</td>
+                <td>${escapeHtml(row.multiplier)}</td>
+                <td>${escapeHtml(row.source)}<br><small>${escapeHtml(row.classification)}</small></td>
+                <td>${escapeHtml(row.effective)}<br><small>${escapeHtml(row.fallback)}</small></td>
+                <td>${money(row.contribution, calculation.currency)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      <details class="detail-disclosure">
+        <summary>Inactive/default rules and Technical Source Details</summary>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Line</th><th>Raw quantity</th><th>Raw rate</th><th>Raw amount</th><th>Explanation</th></tr></thead>
+            <tbody>${breakdowns.map((line) => `<tr><td>${escapeHtml(line.line_key)} / ${escapeHtml(line.line_label)}</td><td>${formatNumber(line.quantity, 4)}</td><td>${money(line.unit_rate, calculation.currency)}</td><td>${money(line.amount, calculation.currency)}</td><td>${escapeHtml(line.explanation ?? "No explanation captured")}</td></tr>`).join("")}</tbody>
+          </table>
+        </div>
+        <div class="grid two">
+          <p><strong>Pricing source snapshot</strong><span><code>${escapeHtml(JSON.stringify(sourceSnapshot))}</code></span></p>
+          <p><strong>Dynamic outputs</strong><span><code>${escapeHtml(JSON.stringify(dynamicOutputs))}</code></span></p>
+        </div>
+      </details>
+    </details>
+  `;
+}
+
 function renderPricingSummaryCard(request: QuoteRequest): string {
   const calculation = request.pricingCalculation;
   const breakdowns = request.pricingBreakdowns ?? [];
@@ -1199,10 +1614,12 @@ function renderPricingSummaryCard(request: QuoteRequest): string {
 
   const dynamicInputs = calculation.dynamic_inputs ?? {};
   const dynamicOutputs = calculation.dynamic_outputs ?? {};
+  const sourceSnapshot = calculation.pricing_source_snapshot ?? dynamicInputs;
+  const automationStatus = calculation.automation_status ?? {};
   const auditEvents = calculation.pricing_calculation_audit_events ?? [];
   const meaningfulBreakdowns = breakdowns.filter((line) => Math.abs(Number(line.amount ?? 0)) > 0.005);
   const dynamicLines = meaningfulBreakdowns.filter((line) =>
-    ["fuel_surcharge", "seasonal_multiplier", "tolls", "route_risk", "profit"].includes(line.line_key)
+    ["fuel_surcharge", "seasonal_multiplier", "tolls", "route_risk", "additional_stops", "cross_border", "profit"].includes(line.line_key)
   );
   const operatingCost = meaningfulBreakdowns
     .filter((line) => ["fuel", "driver", "maintenance", "tyres", "insurance", "depreciation"].includes(line.line_key))
@@ -1210,6 +1627,22 @@ function renderPricingSummaryCard(request: QuoteRequest): string {
   const adjustmentsTotal = meaningfulBreakdowns
     .filter((line) => !["fuel", "driver", "maintenance", "tyres", "insurance", "depreciation", "profit", "vat"].includes(line.line_key))
     .reduce((total, line) => total + Number(line.amount ?? 0), 0);
+  const calculatedCost = Number(dynamicOutputs.calculated_cost_before_profit_vat ?? calculation.subtotal ?? 0);
+  const expectedMargin = Number(dynamicOutputs.expected_margin_percent ?? (calculatedCost ? (Number(calculation.profit_amount ?? 0) / calculatedCost) * 100 : 0));
+  const latestAdjustment = adjustments[0];
+  const latestWarnings = latestAdjustment?.warning_flags ?? [];
+  const dieselSource = sourceSnapshot.diesel as Record<string, unknown> | undefined;
+  const routeSource = sourceSnapshot.route as Record<string, unknown> | undefined;
+  const tollSource = sourceSnapshot.tolls as Record<string, unknown> | undefined;
+  const routeRiskSource = (sourceSnapshot.route_risk ?? sourceSnapshot.routeRisk) as Record<string, unknown> | undefined;
+  const seasonSource = sourceSnapshot.season as Record<string, unknown> | undefined;
+  const equipmentSource = sourceSnapshot.equipment as Record<string, unknown> | undefined;
+  const tollPlazas = Array.isArray(tollSource?.plazas) ? tollSource.plazas as Record<string, unknown>[] : [];
+  const matchedRiskRules = Array.isArray(routeRiskSource?.matched_rules) ? routeRiskSource.matched_rules as Record<string, unknown>[] : [];
+  const controllingRiskRule = routeRiskSource?.controlling_rule as Record<string, unknown> | undefined;
+  const automationFlags = Object.entries(automationStatus)
+    .filter(([, value]) => value === true)
+    .map(([key]) => humanizeKey(key));
 
   return `
     <section class="pricing-summary-card">
@@ -1229,6 +1662,62 @@ function renderPricingSummaryCard(request: QuoteRequest): string {
         <p><strong>Seasonal multiplier</strong><span>${formatNumber(Number(calculation.seasonal_multiplier ?? dynamicInputs.seasonal_multiplier ?? 1), 2)}x</span></p>
         <p><strong>Margin profile</strong><span>${escapeHtml(calculation.margin_profile_key ?? dynamicValue(dynamicInputs, "margin_profile", "target"))}</span></p>
       </div>
+      <div class="summary-block">
+        <h3>Source transparency</h3>
+        <div class="grid three">
+          <p><strong>Diesel</strong><span>${escapeHtml(dynamicValue(dieselSource, "source_label", "Manual / live provider not configured"))} - ${money(calculation.fuel_price_per_litre ?? Number(dynamicInputs.diesel_price_per_litre ?? 0), calculation.currency)} / L</span></p>
+          <p><strong>Route</strong><span>${escapeHtml(dynamicValue(routeSource, "source", "Manual or unavailable"))} - ${formatDistanceKm(Number(routeSource?.distance_km ?? calculation.estimated_distance_km))}</span></p>
+          <p><strong>Tolls</strong><span>${escapeHtml(dynamicValue(tollSource, "source", "Manual review required"))} - ${money(calculation.toll_amount ?? 0, calculation.currency)}</span></p>
+          <p><strong>Season</strong><span>${escapeHtml(dynamicValue(seasonSource, "season_key", "normal"))} - ${formatNumber(Number(seasonSource?.multiplier ?? calculation.seasonal_multiplier ?? 1), 2)}x</span></p>
+          <p><strong>Equipment</strong><span>${escapeHtml(dynamicValue(equipmentSource, "selected_equipment", "To be confirmed"))}</span></p>
+          <p><strong>Automation review</strong><span>${automationFlags.length ? escapeHtml(automationFlags.join(", ")) : "No automation gaps flagged"}</span></p>
+        </div>
+      </div>
+      <div class="summary-block">
+        <h3>Toll calculation</h3>
+        <div class="grid three">
+          <p><strong>Status</strong><span>${escapeHtml(humanizeKey(dynamicValue(tollSource, "status", calculation.toll_amount ? "configured fallback" : "review required")))}</span></p>
+          <p><strong>Detected plazas</strong><span>${tollPlazas.length}</span></p>
+          <p><strong>Total toll cost</strong><span>${money(calculation.toll_amount ?? 0, calculation.currency)}</span></p>
+        </div>
+        ${tollPlazas.length ? `
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Plaza</th><th>Road</th><th>Class</th><th>Source</th><th>Amount</th></tr></thead>
+              <tbody>
+                ${tollPlazas.map((plaza) => `<tr><td>${escapeHtml(String(plaza.plaza_name ?? "Toll plaza"))}</td><td>${escapeHtml(String(plaza.road_route ?? ""))}</td><td>${escapeHtml(String(plaza.toll_class ?? tollSource?.toll_class ?? "Review"))}</td><td>${escapeHtml(humanizeKey(String(plaza.source ?? tollSource?.source ?? "official tariff")))}</td><td>${money(Number(plaza.amount ?? 0), calculation.currency)}</td></tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : `<p class="muted">${escapeHtml(dynamicValue(tollSource, "review_warning", dynamicValue(tollSource, "status", "No toll plazas were charged.")))}</p>`}
+      </div>
+      <div class="summary-block">
+        <h3>Route Risk</h3>
+        <div class="grid three">
+          <p><strong>Category</strong><span>${escapeHtml(humanizeKey(dynamicValue(routeRiskSource, "category", "normal")))}</span></p>
+          <p><strong>Matched rule</strong><span>${escapeHtml(String(controllingRiskRule?.rule_name ?? dynamicValue(routeRiskSource, "status", "No configured policy match")))}</span></p>
+          <p><strong>Total adjustment</strong><span>${money(calculation.route_risk_amount ?? Number(dynamicOutputs.route_risk_amount ?? 0), calculation.currency)}</span></p>
+          <p><strong>Fixed surcharge</strong><span>${money(Number(routeRiskSource?.fixed_surcharge ?? controllingRiskRule?.fixed_surcharge ?? 0), calculation.currency)}</span></p>
+          <p><strong>Percentage surcharge</strong><span>${formatNumber(Number(routeRiskSource?.surcharge_percent ?? controllingRiskRule?.surcharge_percent ?? 0), 2)}%</span></p>
+          <p><strong>Source</strong><span>${escapeHtml(dynamicValue(routeRiskSource, "source", "Time Trucking configured policy"))}</span></p>
+        </div>
+        <p class="muted">${escapeHtml(dynamicValue(routeRiskSource, "reason", "No Time Trucking risk rule configured/matched."))}</p>
+        ${matchedRiskRules.length ? `
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Rule</th><th>Trigger</th><th>Category</th><th>Priority</th><th>Reason</th></tr></thead>
+              <tbody>
+                ${matchedRiskRules.map((rule) => `<tr><td>${escapeHtml(String(rule.rule_name ?? "Risk rule"))}</td><td>${escapeHtml(humanizeKey(String(rule.trigger_scope ?? "")))}</td><td>${escapeHtml(humanizeKey(String(rule.category ?? "normal")))}</td><td>${Number(rule.priority ?? 100)}</td><td>${escapeHtml(String(rule.matching_reason ?? "Configured policy match"))}</td></tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : ""}
+        <div class="grid three">
+          <label>Override risk category<input name="routeRiskOverrideCategory" placeholder="Optional category" /></label>
+          <label>Override risk amount<input name="routeRiskOverrideAmount" type="number" min="0" step="0.01" placeholder="0.00" /></label>
+          <label>Override risk reason<input name="routeRiskOverrideReason" placeholder="Required for route-risk override" /></label>
+        </div>
+      </div>
       <details class="detail-disclosure">
         <summary>Detailed pricing lines</summary>
         <div class="table-wrap">
@@ -1240,6 +1729,7 @@ function renderPricingSummaryCard(request: QuoteRequest): string {
         </table>
         </div>
       </details>
+      ${renderPricingAuditView(request, calculation, breakdowns)}
       <div class="summary-block">
         <h3>Calculation drivers</h3>
         <div class="grid three">
@@ -1270,10 +1760,15 @@ function renderPricingSummaryCard(request: QuoteRequest): string {
       </div>
       <div class="summary-block">
         <h3>Manager final price override</h3>
-        <div class="grid two">
+        <div class="grid three">
+          <p><strong>System recommended</strong><span>${money(calculation.recommended_selling_price, calculation.currency)}</span></p>
+          <p><strong>Calculated cost</strong><span>${money(calculatedCost, calculation.currency)}</span></p>
+          <p><strong>Expected profit / margin</strong><span>${money(calculation.profit_amount, calculation.currency)} / ${formatNumber(expectedMargin, 2)}%</span></p>
+          ${latestAdjustment ? `<p><strong>Latest override</strong><span>${money(latestAdjustment.adjusted_selling_price, calculation.currency)}</span></p><p><strong>Resulting profit</strong><span>${money(latestAdjustment.resulting_profit ?? 0, calculation.currency)}</span></p><p><strong>Resulting margin</strong><span>${formatNumber(latestAdjustment.resulting_margin_percent ?? 0, 2)}%</span></p>` : ""}
           <label>Override final selling price<input name="overrideSellingPrice" type="number" min="0" step="0.01" value="${calculation.recommended_selling_price}" /></label>
           <label>Override reason<textarea name="overrideReason" placeholder="Required when overriding price"></textarea></label>
         </div>
+        ${latestWarnings.length ? `<div class="flag-row">${latestWarnings.map((warning) => `<span class="flag warning">${escapeHtml(humanizeKey(warning))}</span>`).join("")}</div>` : ""}
         <small>${adjustments.length} adjustment(s) recorded.</small>
       </div>
     </section>
@@ -2020,7 +2515,7 @@ function renderDashboardActions(user: InternalUserRecord, metrics: {
     canViewOperations ? ["Quotes", "./quote-review.html", `${metrics.reviewCount} awaiting review`, "review"] : null,
     canViewOperations ? ["Accepted Loads", "./accepted-loads.html", `${metrics.acceptedCount} accepted`, "accepted"] : null,
     canViewOperations ? ["Rejected Review", "./quote-review.html?status=client_declined", `${metrics.declinedCount} declined`, "warning"] : null,
-    canManagePricing ? ["Pricing Settings", "./pricing-settings.html", "Dynamic pricing configuration", "money"] : null,
+    canManagePricing ? ["Pricing Settings", "./pricing-settings.html", "Commercial rate-card configuration", "money"] : null,
     canViewOperations ? ["Customers", "./customers.html", "RFQ and quote customer history", "sent"] : null,
     canManageUsers ? ["Users", "./users-dashboard.html", "Manage internal access", "accepted"] : null,
     canReadSettings ? ["Settings", "./admin-settings.html", "Branding, templates, numbering", "review"] : null
@@ -2319,27 +2814,233 @@ async function initUsersDashboard(): Promise<void> {
   await render();
 }
 
+const commercialCategoryLabels: Record<string, string> = {
+  "1_ton": "1 Ton",
+  "1_8_ton": "1.8 Ton",
+  "3_ton": "3 Ton",
+  "5_ton": "5 Ton",
+  "8_ton": "8 Ton",
+  "12_ton": "12 Ton",
+  semi: "Semi",
+  superlink: "S/L"
+};
+
+function timeTruckingRateCategoryForEquipment(profile: StandardEquipmentProfileRecord): { label: string; status: string; source: string } {
+  const code = profile.equipment_code;
+  if (code === "bakkie-panel-1t") return { label: "1 Ton", status: "Mapped", source: "Confirmed by commercial pricing implementation" };
+  if (code === "rigid-8t-tautliner") return { label: "8 Ton", status: "Mapped", source: "Confirmed by commercial pricing implementation" };
+  if (code === "tri-axle-tautliner" || code === "tri-axle-flatdeck") return { label: "Semi", status: "Mapped", source: "Confirmed by commercial pricing implementation" };
+  if (code === "superlink-tautliner" || code === "superlink-flatdeck") return { label: "S/L", status: "Mapped", source: "Confirmed by commercial pricing implementation" };
+  return { label: "Mapping requires confirmation", status: "Review required", source: "No operationally certain Time Trucking rate category stored" };
+}
+
+function renderStatusBadge(status: "live" | "configured" | "confirmed" | "warning" | "review" | "pending" | "inactive" | "failed", label: string): string {
+  const className = status === "warning" || status === "review" || status === "pending"
+    ? "warning"
+    : status === "failed"
+      ? "critical"
+      : "info";
+  return `<span class="flag ${className}">${escapeHtml(label)}</span>`;
+}
+
+function renderPricingReadiness(settings: Record<string, unknown>): string {
+  const vat = numeric(settings.vat_percent);
+  const nightOutRate = numeric(settings.night_out_rate, numeric(settings.driver_overnight_allowance));
+  const tollRows = Array.isArray(settings.toll_provider_status_rows) ? settings.toll_provider_status_rows as Record<string, unknown>[] : [];
+  const hasCompleteTollCoverage = tollRows.some((row) => row.coverage_status === "complete");
+  const checks = [
+    { label: "Commercial rate card", value: "Configured", status: "confirmed" as const, scope: "Blocking" },
+    { label: "Diesel source", value: String(settings.diesel_feed_health ?? "Review required"), status: String(settings.diesel_feed_health ?? "").includes("healthy") ? "live" as const : "review" as const, scope: "Blocking if stale/failed" },
+    { label: "Additional stop rate", value: money(numeric(settings.additional_stop_rate)), status: numeric(settings.additional_stop_rate) === 1500 ? "confirmed" as const : "review" as const, scope: "Applies when extra stops exist" },
+    { label: "Night-out rate", value: money(nightOutRate), status: nightOutRate === 1750 ? "confirmed" as const : "review" as const, scope: "Applies when night-out is confirmed" },
+    { label: "Night-out trigger", value: "Pending confirmation", status: "pending" as const, scope: "Blocking for automatic overnight pricing" },
+    { label: "Day vs km rule", value: "Pending Henning confirmation", status: "pending" as const, scope: "Blocking for automatic base selection" },
+    { label: "10% protection", value: "Pending Henning confirmation", status: "pending" as const, scope: "Inactive until approved" },
+    { label: "VAT", value: `${formatNumber(vat, 4)}%`, status: vat > 0 ? "configured" as const : "review" as const, scope: vat > 0 ? "Configured" : "Blocking before automatic customer quoting" },
+    { label: "Toll classification", value: hasCompleteTollCoverage ? "Coverage available" : "Review required where mapping incomplete", status: hasCompleteTollCoverage ? "configured" as const : "review" as const, scope: "Applies on toll routes" },
+    { label: "Cross-border", value: numeric(settings.cross_border_surcharge) > 0 ? money(numeric(settings.cross_border_surcharge)) : "Not configured", status: numeric(settings.cross_border_surcharge) > 0 ? "configured" as const : "pending" as const, scope: "Optional / only cross-border" },
+    { label: "Seasonal rules", value: "Default multipliers present; date-specific rule pending", status: "pending" as const, scope: "Optional / only approved seasons" },
+    { label: "Route-risk rules", value: String(settings.route_risk_policy_status ?? "Not configured"), status: String(settings.route_risk_policy_status ?? "").includes("configured") ? "configured" as const : "pending" as const, scope: "Optional / only risk routes" }
+  ];
+  return checks.map((check) => `
+    <article class="readiness-card">
+      <strong>${escapeHtml(check.label)}</strong>
+      ${renderStatusBadge(check.status, check.value)}
+      <small>${escapeHtml(check.scope)}</small>
+    </article>
+  `).join("");
+}
+
+function renderCommercialRateCardTable(rows: CommercialRateCardRecord[], currency = "ZAR"): string {
+  if (!rows.length) return `<p class="muted">Commercial rate card is not visible to this session.</p>`;
+  const grouped = new Map<string, { nonHaz?: CommercialRateCardRecord; haz?: CommercialRateCardRecord }>();
+  for (const row of rows) {
+    const group = grouped.get(row.rate_category_key) ?? {};
+    if (row.hazardous) group.haz = row;
+    else group.nonHaz = row;
+    grouped.set(row.rate_category_key, group);
+  }
+  const orderedKeys = ["1_ton", "1_8_ton", "3_ton", "5_ton", "8_ton", "12_ton", "semi", "superlink"];
+  return `
+    <div class="table-wrap">
+      <table class="rate-card-table">
+        <thead><tr><th>Vehicle category</th><th>NON-HAZ Day Rate</th><th>NON-HAZ Rate/km</th><th>HAZ Day Rate</th><th>HAZ Rate/km</th><th>Default axles</th><th>Status</th><th>Last updated</th></tr></thead>
+        <tbody>
+          ${orderedKeys.map((key) => {
+            const group = grouped.get(key);
+            if (!group) return "";
+            const source = group.nonHaz ?? group.haz;
+            const input = (row: CommercialRateCardRecord | undefined, field: "day_rate" | "per_km_rate") => row
+              ? `<input data-rate-card-id="${escapeHtml(row.id)}" data-rate-field="${field}" type="number" min="0" step="${field === "day_rate" ? "0.01" : "0.0001"}" value="${escapeHtml(String(row[field] ?? ""))}" />`
+              : `<span class="muted">Missing</span>`;
+            const axleRow = group.nonHaz ?? group.haz;
+            return `
+              <tr>
+                <td><strong>${escapeHtml(commercialCategoryLabels[key] ?? source?.display_name ?? key)}</strong></td>
+                <td>${input(group.nonHaz, "day_rate")}</td>
+                <td>${input(group.nonHaz, "per_km_rate")}</td>
+                <td>${input(group.haz, "day_rate")}</td>
+                <td>${input(group.haz, "per_km_rate")}</td>
+                <td><input data-rate-category="${escapeHtml(key)}" data-rate-field="axle_count_default" type="number" min="0" step="1" value="${escapeHtml(String(axleRow?.axle_count_default ?? ""))}" /></td>
+                <td>${renderStatusBadge(source?.is_active ? "confirmed" : "inactive", source?.is_active ? "Active" : "Inactive")}</td>
+                <td>${escapeHtml(formatDateTime(source?.updated_at ?? ""))}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">Currency: ${escapeHtml(currency)}. HAZ cargo selects the HAZ commercial row; generic hazmat charges are not stacked by default.</p>
+  `;
+}
+
+function collectCommercialRateCardEdits(form: HTMLFormElement, existingRows: CommercialRateCardRecord[]): CommercialRateCardRecord[] {
+  const byId = new Map(existingRows.map((row) => [row.id, { ...row }]));
+  form.querySelectorAll<HTMLInputElement>("[data-rate-card-id][data-rate-field]").forEach((input) => {
+    const id = input.dataset.rateCardId ?? "";
+    const field = input.dataset.rateField as "day_rate" | "per_km_rate" | "axle_count_default" | undefined;
+    const row = byId.get(id);
+    if (!row || !field) return;
+    const value = numeric(input.value);
+    if (field === "axle_count_default") row.axle_count_default = value > 0 ? Math.round(value) : null;
+    else row[field] = value;
+  });
+  form.querySelectorAll<HTMLInputElement>("[data-rate-category][data-rate-field='axle_count_default']").forEach((input) => {
+    const category = input.dataset.rateCategory ?? "";
+    const value = numeric(input.value);
+    for (const row of byId.values()) {
+      if (row.rate_category_key === category) row.axle_count_default = value > 0 ? Math.round(value) : null;
+    }
+  });
+  return [...byId.values()];
+}
+
+function renderPricingDataSources(settings: Record<string, unknown>): string {
+  const dieselHealthy = String(settings.diesel_feed_health ?? "").includes("healthy");
+  const tollHealthy = String(settings.toll_feed_health ?? "").includes("healthy");
+  const rateRows = Array.isArray(settings.commercial_rate_card_rows) ? settings.commercial_rate_card_rows as CommercialRateCardRecord[] : [];
+  const lastRateUpdate = rateRows.map((row) => row.updated_at).filter(Boolean).sort().at(-1) ?? "";
+  const sources = [
+    { label: "Route intelligence", status: "Live", detail: "Provider: Google Routes / manual fallback per RFQ", meta: "Last successful lookup is stored on each route estimate" },
+    { label: "Diesel", status: dieselHealthy ? "Live" : "Review required", detail: `DMPR 50 ppm / ${money(numeric(settings.fuel_price_per_litre))}/L`, meta: `Effective ${formatDateOnly(String(settings.diesel_effective_from ?? ""))}; refreshed ${formatDateTime(String(settings.diesel_refreshed_at ?? ""))}` },
+    { label: "Tolls", status: tollHealthy ? "Live" : "Review required", detail: String(settings.toll_feed_health ?? "Official toll feed needs attention"), meta: `Tariff effective ${formatDateOnly(String(settings.toll_active_tariff_effective_date ?? ""))}` },
+    { label: "Time Trucking commercial rates", status: "Configured", detail: "Source: Time Trucking / Henning supplied rate card", meta: `Last updated ${formatDateTime(lastRateUpdate)}` }
+  ];
+  return sources.map((source) => `
+    <article class="readiness-card">
+      <strong>${escapeHtml(source.label)}</strong>
+      ${renderStatusBadge(source.status === "Live" || source.status === "Configured" ? "configured" : "review", source.status)}
+      <span>${escapeHtml(source.detail)}</span>
+      <small>${escapeHtml(source.meta)}</small>
+    </article>
+  `).join("");
+}
+
 function initPricingSettings(): void {
   const form = document.querySelector<HTMLFormElement>("#pricingSettingsForm");
   const output = document.querySelector<HTMLElement>("#pricingSettingsOutput");
   if (!form || !output) return;
   const equipmentProfilesList = document.querySelector<HTMLElement>("#equipmentProfilesList");
+  const pricingReadinessList = document.querySelector<HTMLElement>("#pricingReadinessList");
+  const commercialRateCardList = document.querySelector<HTMLElement>("#commercialRateCardList");
+  const pricingDataSourcesList = document.querySelector<HTMLElement>("#pricingDataSourcesList");
+  const pricingRuleVersionBadge = document.querySelector<HTMLElement>("#pricingRuleVersionBadge");
+  const tollProviderStatusList = document.querySelector<HTMLElement>("#tollProviderStatusList");
+  const tollCatalogueList = document.querySelector<HTMLElement>("#tollCatalogueList");
+  const routeRiskCategoriesList = document.querySelector<HTMLElement>("#routeRiskCategoriesList");
+  const routeRiskRulesList = document.querySelector<HTMLElement>("#routeRiskRulesList");
+  const refreshDieselButton = document.querySelector<HTMLButtonElement>("#refreshOfficialDieselButton");
+  let currentCommercialRateCardRows: CommercialRateCardRecord[] = [];
 
-  if (equipmentProfilesList) {
-    if (isSupabaseConfigured) {
-      void listStandardEquipmentProfiles()
-        .then((profiles) => {
-          equipmentProfilesList.innerHTML = profiles.length
-            ? profiles.map(renderEquipmentProfileRow).join("")
-            : `<p class="muted">No active standard equipment profiles found.</p>`;
-        })
-        .catch((error) => {
-          equipmentProfilesList.innerHTML = `<p class="muted">Equipment profiles could not load: ${escapeHtml(friendlyError(error))}</p>`;
-        });
-    } else {
-      equipmentProfilesList.innerHTML = `<p class="muted">Connect Supabase to load the production equipment catalogue.</p>`;
+  const reloadPricingSettings = async (message = "Active database values loaded."): Promise<void> => {
+    const settings = await loadPricingSettings();
+    currentCommercialRateCardRows = Array.isArray(settings.commercial_rate_card_rows) ? settings.commercial_rate_card_rows as CommercialRateCardRecord[] : [];
+    populatePricingSettingsForm(form, settings);
+    if (pricingRuleVersionBadge) {
+      pricingRuleVersionBadge.textContent = String(settings.rule_version ?? "pricing-v3-commercial-rate-card");
     }
+    if (pricingReadinessList) {
+      pricingReadinessList.innerHTML = renderPricingReadiness(settings);
+    }
+    if (commercialRateCardList) {
+      commercialRateCardList.innerHTML = renderCommercialRateCardTable(currentCommercialRateCardRows, String(settings.currency ?? "ZAR"));
+    }
+    if (pricingDataSourcesList) {
+      pricingDataSourcesList.innerHTML = renderPricingDataSources(settings);
+    }
+    if (equipmentProfilesList) {
+      const profiles = Array.isArray(settings.standard_equipment_profiles) ? settings.standard_equipment_profiles as StandardEquipmentProfileRecord[] : [];
+      equipmentProfilesList.innerHTML = profiles.length
+        ? profiles.map(renderEquipmentProfileRow).join("")
+        : `<p class="muted">No active standard equipment profiles found.</p>`;
+    }
+    if (tollProviderStatusList) {
+      const rows = Array.isArray(settings.toll_provider_status_rows) ? settings.toll_provider_status_rows as Record<string, unknown>[] : [];
+      tollProviderStatusList.innerHTML = rows.length ? rows.map(renderTollProviderStatusRow).join("") : `<p class="muted">No toll provider status rows are configured.</p>`;
+    }
+    if (tollCatalogueList) {
+      const rows = Array.isArray(settings.toll_catalogue_rows) ? settings.toll_catalogue_rows as Record<string, unknown>[] : [];
+      tollCatalogueList.innerHTML = rows.length ? rows.map(renderTollCatalogueRow).join("") : `<p class="muted">No active official toll tariffs are available.</p>`;
+    }
+    if (routeRiskCategoriesList) {
+      const rows = Array.isArray(settings.route_risk_categories) ? settings.route_risk_categories as Record<string, unknown>[] : [];
+      routeRiskCategoriesList.innerHTML = rows.length ? rows.map(renderRouteRiskCategoryRow).join("") : `<p class="muted">No route-risk categories are configured.</p>`;
+    }
+    if (routeRiskRulesList) {
+      const rows = Array.isArray(settings.route_risk_rules) ? settings.route_risk_rules as Record<string, unknown>[] : [];
+      routeRiskRulesList.innerHTML = rows.length ? rows.map(renderRouteRiskRuleRow).join("") : `<p class="muted">No Time Trucking route-risk rules are active yet.</p>`;
+    }
+    output.innerHTML = `<strong>${escapeHtml(message)}</strong><span>${escapeHtml(String(settings.profile_name ?? "Active pricing profile"))} is the current source for this page. ${escapeHtml(String(settings.diesel_feed_health ?? "Official diesel feed needs attention"))}. ${escapeHtml(String(settings.toll_feed_health ?? "Official toll feed needs attention"))}.</span>`;
+  };
+
+  if (isSupabaseConfigured) {
+    void reloadPricingSettings()
+      .catch((error) => {
+        output.innerHTML = `<strong>Pricing settings could not load.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+      });
   }
+
+  refreshDieselButton?.addEventListener("click", async () => {
+    if (!isSupabaseConfigured) {
+      output.innerHTML = `<strong>Official diesel check unavailable.</strong><span>Connect Supabase to check the official feed.</span>`;
+      return;
+    }
+    refreshDieselButton.disabled = true;
+    const previousLabel = refreshDieselButton.textContent ?? "Check for latest official diesel price";
+    refreshDieselButton.textContent = "Checking official diesel...";
+    try {
+      const result = await refreshOfficialDieselPrice();
+      await reloadPricingSettings("Official diesel feed checked.");
+      const grade = result.dieselGrade ? ` ${String(result.dieselGrade)}` : "";
+      const price = result.officialReferencePricePerLitre ? ` R${Number(result.officialReferencePricePerLitre).toFixed(4)}/L` : "";
+      output.innerHTML += `<small>Latest verified${escapeHtml(grade)}${escapeHtml(price)} from ${escapeHtml(String(result.effectiveDate ?? "the current DMPR publication"))}.</small>`;
+    } catch (error) {
+      output.innerHTML = `<strong>Official diesel check failed.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
+    } finally {
+      refreshDieselButton.disabled = false;
+      refreshDieselButton.textContent = previousLabel;
+    }
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2363,25 +3064,48 @@ function initPricingSettings(): void {
       maximum_discount_percent: value("maximum_discount_percent"),
       currency: value("currency") || "ZAR",
       quote_validity_days: value("quote_validity_days") || "7",
-      rule_version: "pricing-v2-dynamic",
+      rule_version: "pricing-v3-commercial-rate-card",
       diesel_base_price_per_litre: value("diesel_base_price_per_litre"),
       diesel_effective_from: value("diesel_effective_from"),
       diesel_provider_id: value("diesel_provider_id"),
       diesel_refreshed_at: value("diesel_refreshed_at"),
+      diesel_max_age_days: value("diesel_max_age_days"),
       diesel_surcharge_percent: value("diesel_surcharge_percent"),
       diesel_admin_override_price_per_litre: value("diesel_admin_override_price_per_litre"),
       diesel_manual_override_enabled: value("diesel_manual_override_enabled") || "true",
+      preferred_diesel_grade: value("preferred_diesel_grade"),
+      diesel_pricing_basis: value("diesel_pricing_basis"),
+      diesel_pricing_zone: value("diesel_pricing_zone"),
+      diesel_depot_location: value("diesel_depot_location"),
+      diesel_adjustment_type: value("diesel_adjustment_type") || "fixed_r_per_litre",
+      diesel_adjustment_value: value("diesel_adjustment_value"),
+      diesel_adjustment_reason: value("diesel_adjustment_reason"),
+      diesel_override_reason: value("diesel_override_reason"),
+      diesel_override_starts_at: value("diesel_override_starts_at"),
+      diesel_override_expires_at: value("diesel_override_expires_at"),
       fuel_surcharge_enabled: value("fuel_surcharge_enabled") || "true",
+      commercial_rate_basis_rule: value("commercial_rate_basis_rule") || "0",
+      commercial_chargeable_day_count_default: value("commercial_chargeable_day_count_default") || "1",
+      night_out_rate: value("night_out_rate") || value("driver_overnight_allowance") || "1750",
+      night_out_count_default: value("night_out_count_default") || "0",
+      diesel_selling_adjustment_enabled: value("diesel_selling_adjustment_enabled") || "0",
+      commercial_additional_margin_percent: value("commercial_additional_margin_percent") || "0",
+      commercial_10_percent_protection_enabled: value("commercial_10_percent_protection_enabled") || "0",
       seasonal_low_multiplier: value("seasonal_low_multiplier"),
       seasonal_normal_multiplier: value("seasonal_normal_multiplier"),
       seasonal_busy_multiplier: value("seasonal_busy_multiplier"),
       seasonal_peak_multiplier: value("seasonal_peak_multiplier"),
       default_toll_cost: value("default_toll_cost"),
       default_route_risk_surcharge: value("default_route_risk_surcharge"),
+      toll_manual_review_required: value("toll_manual_review_required") || "true",
       vehicle_cost_profile_key: value("vehicle_cost_profile_key") || "default",
       margin_profile_key: value("margin_profile_key") || "target",
       margin_profile_percent: value("margin_profile_percent"),
       margin_profile_minimum_profit: value("margin_profile_minimum_profit"),
+      minimum_margin_percent: value("minimum_margin_percent"),
+      minimum_selling_price: value("minimum_selling_price"),
+      additional_stop_rate: value("additional_stop_rate"),
+      cross_border_surcharge: value("cross_border_surcharge"),
       surcharges: {
         escort_surcharge: value("escort_surcharge"),
         permit_surcharge: value("permit_surcharge"),
@@ -2397,7 +3121,11 @@ function initPricingSettings(): void {
     if (isSupabaseConfigured) {
       try {
         await savePricingSettings(payload);
-        output.innerHTML = `<strong>Pricing settings saved.</strong><span>Future calculations will use the active configurable profile.</span>`;
+        await saveCommercialPricingSettings(payload);
+        if (currentCommercialRateCardRows.length) {
+          await saveCommercialRateCard(collectCommercialRateCardEdits(form, currentCommercialRateCardRows));
+        }
+        await reloadPricingSettings("Pricing settings saved.");
       } catch (error) {
         output.innerHTML = `<strong>Pricing settings failed.</strong><span>${escapeHtml(friendlyError(error))}</span>`;
       }
@@ -2409,7 +3137,28 @@ function initPricingSettings(): void {
   });
 }
 
+function populatePricingSettingsForm(form: HTMLFormElement, settings: Record<string, unknown>): void {
+  const valueForInput = (key: string, value: unknown): string => {
+    if (value === null || value === undefined) return "";
+    if (key.endsWith("_at") && typeof value === "string") return value.slice(0, 16);
+    if (key.endsWith("_from") && typeof value === "string") return value.slice(0, 10);
+    return String(value);
+  };
+
+  for (const [key, value] of Object.entries(settings)) {
+    const field = form.elements.namedItem(key);
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement)) continue;
+    field.value = valueForInput(key, value);
+  }
+
+  const providerStatusField = form.elements.namedItem("diesel_provider_status");
+  if (providerStatusField instanceof HTMLInputElement) {
+    providerStatusField.value = String(settings.diesel_source_label ?? "Manual / live provider not configured");
+  }
+}
+
 function renderEquipmentProfileRow(profile: StandardEquipmentProfileRecord): string {
+  const rateCategory = timeTruckingRateCategoryForEquipment(profile);
   const flags = [
     profile.enclosed ? "Enclosed" : "",
     profile.open_deck ? "Open deck" : "",
@@ -2417,6 +3166,12 @@ function renderEquipmentProfileRow(profile: StandardEquipmentProfileRecord): str
     profile.refrigerated ? "Reefer" : "",
     profile.specialist_abnormal ? "Specialist" : ""
   ].filter(Boolean);
+  const tollClassLabel = profile.toll_class
+    ? `Toll Class ${profile.toll_class}`
+    : "Toll class requires confirmation";
+  const tollClassSource = humanizeKey(profile.toll_class_source ?? "unconfigured");
+  const suggestedTollClass = profile.suggested_toll_class ? `Suggested Class ${profile.suggested_toll_class}` : "Needs confirmation";
+  const confirmationState = profile.toll_class_confirmed_at ? `Confirmed ${formatDateTime(profile.toll_class_confirmed_at)}` : "Not confirmed";
   return `
     <article class="equipment-profile-row">
       <div>
@@ -2424,11 +3179,94 @@ function renderEquipmentProfileRow(profile: StandardEquipmentProfileRecord): str
         <span>${escapeHtml(profile.trailer_body)} - ${escapeHtml(equipmentSourceLabel(profile.equipment_source_default))}</span>
       </div>
       <div class="quote-meta">
+        <span>Rate category: ${escapeHtml(rateCategory.label)}</span>
         <span>${formatKg(Number(profile.payload_capacity_kg ?? 0))} kg</span>
         <span>${Number(profile.usable_cube_m3 ?? 0)} m3</span>
+        <span>${profile.axle_count ? `${Number(profile.axle_count)} axles` : "Axle count not captured"}</span>
         <span>${Number(profile.deck_length_m ?? 0)}m x ${Number(profile.deck_width_m ?? 0)}m</span>
+        <span>${escapeHtml(suggestedTollClass)}</span>
+        <span>${escapeHtml(tollClassLabel)} - ${escapeHtml(tollClassSource)}</span>
+        <span>${escapeHtml(confirmationState)}</span>
+        <span>${profile.is_active ? "Active" : "Inactive"}</span>
       </div>
+      <small>${escapeHtml(rateCategory.status)}: ${escapeHtml(rateCategory.source)}. ${escapeHtml(profile.suggested_toll_class_reason ?? "Needs confirmation because configured equipment data is insufficient for reliable toll classification.")}</small>
       <div class="flag-row">${flags.map((flag) => `<span class="flag info">${escapeHtml(flag)}</span>`).join("")}</div>
+    </article>
+  `;
+}
+
+function renderTollProviderStatusRow(row: Record<string, unknown>): string {
+  const healthy = row.coverage_status === "complete" && row.scheduler_status !== "needs_attention";
+  return `
+    <article class="equipment-profile-row">
+      <div>
+        <strong>${escapeHtml(String(row.provider_name ?? row.provider_key ?? "Toll provider"))}</strong>
+        <span>${escapeHtml(healthy ? "Official toll feed healthy" : "Official toll feed needs attention")}</span>
+      </div>
+      <div class="quote-meta">
+        <span>${escapeHtml(humanizeKey(String(row.coverage_status ?? row.provider_status ?? "unknown")))}</span>
+        <span>${Number(row.active_plaza_count ?? 0)} active plazas</span>
+        <span>Effective ${escapeHtml(formatDateOnly(String(row.last_publication_effective_date ?? "")))}</span>
+        <span>Last check ${escapeHtml(formatDateTime(String(row.last_check_at ?? "")))}</span>
+      </div>
+      <small>${escapeHtml(String(row.coverage_notes ?? row.last_error ?? ""))}</small>
+    </article>
+  `;
+}
+
+function renderTollCatalogueRow(row: Record<string, unknown>): string {
+  return `
+    <article class="equipment-profile-row">
+      <div>
+        <strong>${escapeHtml(String(row.plaza_name ?? "Toll plaza"))}</strong>
+        <span>${escapeHtml(String(row.road_route ?? ""))} - ${escapeHtml(humanizeKey(String(row.operator_key ?? "")))} - ${escapeHtml(humanizeKey(String(row.plaza_type ?? "mainline")))}</span>
+      </div>
+      <div class="quote-meta">
+        <span>Class 1 ${money(Number(row.class_1_rate ?? 0))}</span>
+        <span>Class 2 ${money(Number(row.class_2_rate ?? 0))}</span>
+        <span>Class 3 ${money(Number(row.class_3_rate ?? 0))}</span>
+        <span>Class 4 ${money(Number(row.class_4_rate ?? 0))}</span>
+        <span>From ${escapeHtml(formatDateOnly(String(row.effective_from ?? "")))}</span>
+      </div>
+      <small>${row.vat_included ? "VAT included in official tariff" : "VAT treatment requires review"}</small>
+    </article>
+  `;
+}
+
+function renderRouteRiskCategoryRow(row: Record<string, unknown>): string {
+  return `
+    <article class="equipment-profile-row">
+      <div>
+        <strong>${escapeHtml(String(row.display_name ?? row.category_key ?? "Risk category"))}</strong>
+        <span>${escapeHtml(String(row.is_active) === "false" ? "Inactive" : "Active")} - ${escapeHtml(humanizeKey(String(row.category_key ?? "normal")))}</span>
+      </div>
+      <div class="quote-meta">
+        <span>Fixed ${money(Number(row.fixed_surcharge ?? 0))}</span>
+        <span>${formatNumber(Number(row.surcharge_percent ?? 0), 2)}%</span>
+        <span>Severity ${Number(row.severity_rank ?? 0)}</span>
+        <span>${row.manager_review_required ? "Review required" : "No review by category"}</span>
+      </div>
+      <small>${escapeHtml(String(row.notes ?? "Time Trucking configured policy category."))}</small>
+    </article>
+  `;
+}
+
+function renderRouteRiskRuleRow(row: Record<string, unknown>): string {
+  const activeDates = `${formatDateOnly(String(row.effective_from ?? ""))}${row.effective_to ? ` to ${formatDateOnly(String(row.effective_to))}` : ""}`;
+  return `
+    <article class="equipment-profile-row">
+      <div>
+        <strong>${escapeHtml(String(row.rule_name ?? "Route-risk rule"))}</strong>
+        <span>${escapeHtml(humanizeKey(String(row.trigger_scope ?? "route_text")))} - ${escapeHtml(humanizeKey(String(row.risk_level ?? "normal")))}</span>
+      </div>
+      <div class="quote-meta">
+        <span>Priority ${Number(row.priority ?? 100)}</span>
+        <span>Fixed ${money(Number(row.fixed_surcharge ?? 0))}</span>
+        <span>${formatNumber(Number(row.surcharge_percent ?? 0), 2)}%</span>
+        <span>${escapeHtml(activeDates)}</span>
+        <span>${String(row.is_active) === "false" ? "Inactive" : escapeHtml(humanizeKey(String(row.source_status ?? "time_trucking_configured_policy")))}</span>
+      </div>
+      <small>${escapeHtml(String(row.rule_description ?? row.notes ?? "No unapproved public advisory data controls this surcharge."))}</small>
     </article>
   `;
 }
@@ -3805,8 +4643,20 @@ async function initQuoteReview(): Promise<void> {
     const componentOverrideLine = formValue(data, "componentOverrideLine");
     const componentOverrideAmount = numberValue(data, "componentOverrideAmount");
     const componentOverrideReason = formValue(data, "componentOverrideReason");
+    const routeRiskOverrideCategory = formValue(data, "routeRiskOverrideCategory");
+    const routeRiskOverrideAmount = numberValue(data, "routeRiskOverrideAmount");
+    const routeRiskOverrideReason = formValue(data, "routeRiskOverrideReason");
     if (isSupabaseConfigured) {
       try {
+        if (request.pricingCalculation && routeRiskOverrideReason) {
+          await recordRouteRiskOverride({
+            quoteRequestId: request.id,
+            pricingCalculationId: request.pricingCalculation.id,
+            overrideRiskCategory: routeRiskOverrideCategory,
+            overrideRiskAmount: routeRiskOverrideAmount,
+            overrideReason: routeRiskOverrideReason
+          });
+        }
         if (request.pricingCalculation && componentOverrideLine && componentOverrideReason) {
           await recordPricingComponentOverride({
             quoteRequestId: request.id,
@@ -3858,8 +4708,20 @@ async function initQuoteReview(): Promise<void> {
     const componentOverrideLine = formValue(data, "componentOverrideLine");
     const componentOverrideAmount = numberValue(data, "componentOverrideAmount");
     const componentOverrideReason = formValue(data, "componentOverrideReason");
+    const routeRiskOverrideCategory = formValue(data, "routeRiskOverrideCategory");
+    const routeRiskOverrideAmount = numberValue(data, "routeRiskOverrideAmount");
+    const routeRiskOverrideReason = formValue(data, "routeRiskOverrideReason");
     if (isSupabaseConfigured) {
       try {
+        if (request.pricingCalculation && routeRiskOverrideReason) {
+          await recordRouteRiskOverride({
+            quoteRequestId: request.id,
+            pricingCalculationId: request.pricingCalculation.id,
+            overrideRiskCategory: routeRiskOverrideCategory,
+            overrideRiskAmount: routeRiskOverrideAmount,
+            overrideReason: routeRiskOverrideReason
+          });
+        }
         if (request.pricingCalculation && componentOverrideLine && componentOverrideReason) {
           await recordPricingComponentOverride({
             quoteRequestId: request.id,

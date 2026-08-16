@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { CargoCategory, CustomerPortalRecord, EquipmentSource, InternalRole, InternalSettingsPayload, InternalUserRecord, PublicQuoteDocumentRecord, PublicQuoteResponseRecord, QuoteDocumentRecord, QuoteRequestRecord, QuoteStatus, StandardEquipmentProfileRecord, StopType } from "./types";
+import type { CargoCategory, CommercialRateCardRecord, CustomerPortalRecord, EquipmentSource, InternalRole, InternalSettingsPayload, InternalUserRecord, PublicQuoteDocumentRecord, PublicQuoteResponseRecord, QuoteDocumentRecord, QuoteRequestRecord, QuoteStatus, StandardEquipmentProfileRecord, StopType } from "./types";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -328,6 +328,24 @@ export async function recordPricingComponentOverride(input: {
   if (error) throw error;
 }
 
+export async function recordRouteRiskOverride(input: {
+  quoteRequestId: string;
+  pricingCalculationId: string;
+  overrideRiskCategory: string;
+  overrideRiskAmount: number;
+  overrideReason: string;
+}): Promise<void> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { error } = await supabase.rpc("ttaq_record_route_risk_override", {
+    target_quote_request_id: input.quoteRequestId,
+    target_pricing_calculation_id: input.pricingCalculationId,
+    override_risk_category_value: input.overrideRiskCategory,
+    override_risk_amount_value: input.overrideRiskAmount,
+    override_reason_value: input.overrideReason
+  });
+  if (error) throw error;
+}
+
 export async function listStandardEquipmentProfiles(): Promise<StandardEquipmentProfileRecord[]> {
   if (!supabase) throw new Error("Supabase is not configured.");
   const { data, error } = await supabase
@@ -368,6 +386,183 @@ export async function savePricingSettings(payload: Record<string, unknown>): Pro
     settings_payload: payload
   });
   if (dieselError) throw dieselError;
+}
+
+export async function saveCommercialRateCard(rows: CommercialRateCardRecord[]): Promise<void> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  for (const row of rows) {
+    const { error } = await supabase
+      .from("time_trucking_commercial_rate_card")
+      .update({
+        day_rate: row.day_rate,
+        per_km_rate: row.per_km_rate,
+        axle_count_default: row.axle_count_default,
+        is_active: row.is_active
+      })
+      .eq("id", row.id);
+    if (error) throw error;
+  }
+}
+
+export async function saveCommercialPricingSettings(payload: Record<string, unknown>): Promise<void> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { error } = await supabase.rpc("ttaq_save_commercial_pricing_settings", {
+    settings_payload: payload
+  });
+  if (error) throw error;
+}
+
+export async function refreshOfficialDieselPrice(): Promise<Record<string, unknown>> {
+  return invokeProductionIntegration<Record<string, unknown>>("refresh_official_diesel");
+}
+
+export async function loadPricingSettings(): Promise<Record<string, unknown>> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+
+  const { data: profile, error: profileError } = await supabase
+    .from("pricing_profiles")
+    .select("*")
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile) throw new Error("No active pricing profile is configured.");
+
+  const profileId = String(profile.id);
+  const [
+    dieselResult,
+    dieselConfigResult,
+    settingsResult,
+    vehicleResult,
+    driverResult,
+    overheadResult,
+    marginResult,
+    providerResult,
+    tollProvidersResult,
+    tollCatalogueResult,
+    routeRiskPolicyResult,
+    commercialRateCardResult,
+    equipmentProfilesResult
+  ] = await Promise.all([
+    supabase.rpc("ttaq_current_diesel_input", { profile_id: profileId }),
+    supabase.from("pricing_diesel_configuration").select("*").eq("pricing_profile_id", profileId).maybeSingle(),
+    supabase.from("pricing_settings").select("setting_key,setting_value").eq("pricing_profile_id", profileId),
+    supabase.from("vehicle_operating_costs").select("*").eq("pricing_profile_id", profileId).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("driver_costs").select("*").eq("pricing_profile_id", profileId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("company_overheads").select("*").eq("pricing_profile_id", profileId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("company_margin_profiles").select("*").eq("pricing_profile_id", profileId).eq("is_default", true).eq("is_active", true).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("pricing_external_providers").select("provider_status,last_success_at,last_failure_at,last_error,last_check_at,next_expected_check_at,last_publication_effective_date,last_publication_title,scheduler_status").eq("provider_key", "za_dmpr_official_diesel").maybeSingle(),
+    supabase.rpc("ttaq_toll_provider_status"),
+    supabase.rpc("ttaq_current_toll_catalogue"),
+    supabase.rpc("ttaq_route_risk_policy_summary"),
+    supabase.from("time_trucking_commercial_rate_card").select("*").eq("pricing_profile_id", profileId).order("rate_category_key", { ascending: true }).order("hazardous", { ascending: true }),
+    supabase.from("standard_equipment_profiles").select("*").eq("is_active", true).order("recommendation_priority", { ascending: true })
+  ]);
+
+  for (const result of [dieselResult, dieselConfigResult, settingsResult, vehicleResult, driverResult, overheadResult, marginResult, providerResult, tollProvidersResult, tollCatalogueResult, routeRiskPolicyResult, commercialRateCardResult, equipmentProfilesResult]) {
+    if (result.error) throw result.error;
+  }
+
+  const settings = Object.fromEntries(
+    ((settingsResult.data ?? []) as Array<{ setting_key: string; setting_value: number }>).map((row) => [row.setting_key, row.setting_value])
+  );
+  const diesel = Array.isArray(dieselResult.data) ? dieselResult.data[0] : dieselResult.data;
+  const dieselConfig = dieselConfigResult.data ?? {};
+  const dieselSource = (diesel?.source_payload ?? {}) as Record<string, unknown>;
+  const vehicle = vehicleResult.data ?? {};
+  const driver = driverResult.data ?? {};
+  const overhead = overheadResult.data ?? {};
+  const margin = marginResult.data ?? {};
+  const provider = (providerResult.data ?? {}) as Record<string, unknown>;
+  const tollProviders = (tollProvidersResult.data ?? []) as Array<Record<string, unknown>>;
+  const tollCatalogue = (tollCatalogueResult.data ?? []) as Array<Record<string, unknown>>;
+  const routeRiskPolicy = (routeRiskPolicyResult.data ?? {}) as Record<string, unknown>;
+  const commercialRateCard = (commercialRateCardResult.data ?? []) as CommercialRateCardRecord[];
+  const equipmentProfiles = (equipmentProfilesResult.data ?? []) as StandardEquipmentProfileRecord[];
+  const tollProviderHealthy = tollProviders.some((row) => row.coverage_status === "complete")
+    && !tollProviders.some((row) => row.coverage_status === "unavailable" || row.coverage_status === "needs_review" || row.scheduler_status === "needs_attention");
+  const dieselCurrent = Number(dieselSource.effective_diesel_price_per_litre ?? diesel?.price_per_litre ?? 0);
+  const dieselBaseline = Number(settings.diesel_base_price_per_litre ?? 0);
+  const dieselVariance = dieselCurrent - dieselBaseline;
+
+  return {
+    profile_id: profileId,
+    profile_name: profile.name,
+    currency: profile.currency,
+    quote_validity_days: profile.quote_validity_days,
+    rule_version: profile.rule_version,
+    fuel_price_per_litre: diesel?.price_per_litre,
+    diesel_previous_price_per_litre: diesel?.previous_price_per_litre,
+    diesel_base_price_per_litre: settings.diesel_base_price_per_litre,
+    diesel_variance_amount_per_litre: Number.isFinite(dieselVariance) ? dieselVariance.toFixed(4) : "",
+    diesel_variance_percent: dieselBaseline > 0 ? ((dieselVariance / dieselBaseline) * 100).toFixed(4) : "",
+    diesel_selling_adjustment_status: "Pending approved Time Trucking formula",
+    diesel_effective_from: diesel?.effective_from,
+    diesel_provider_id: diesel?.provider_name,
+    diesel_provider_status: diesel?.provider_status,
+    diesel_source_label: diesel?.source_label,
+    diesel_refreshed_at: diesel?.retrieved_at,
+    diesel_official_reference_price_per_litre: dieselSource.official_reference_price_per_litre,
+    diesel_effective_price_per_litre: dieselSource.effective_diesel_price_per_litre ?? diesel?.price_per_litre,
+    preferred_diesel_grade: dieselConfig.preferred_diesel_grade ?? dieselSource.preferred_diesel_grade,
+    diesel_pricing_basis: dieselConfig.pricing_basis ?? dieselSource.configured_pricing_basis,
+    diesel_pricing_zone: dieselConfig.pricing_zone ?? dieselSource.configured_pricing_zone,
+    diesel_depot_location: dieselConfig.depot_location ?? dieselSource.configured_depot_location,
+    diesel_adjustment_type: dieselConfig.adjustment_type ?? dieselSource.configured_adjustment_type,
+    diesel_adjustment_value: dieselConfig.adjustment_value ?? dieselSource.configured_adjustment_value,
+    diesel_adjustment_reason: dieselConfig.adjustment_reason,
+    diesel_override_reason: dieselConfig.manual_override_reason ?? dieselSource.manual_override_reason,
+    diesel_override_starts_at: dieselConfig.manual_override_starts_at ?? dieselSource.override_started_at,
+    diesel_override_expires_at: dieselConfig.manual_override_expires_at ?? dieselSource.override_expires_at,
+    diesel_status_detail: dieselSource.review_warning ?? diesel?.source_label,
+    diesel_source_url: dieselSource.source_url,
+    diesel_source_title: dieselSource.source_title,
+    diesel_feed_health: ["configured", "queued"].includes(String(provider.scheduler_status ?? "")) && provider.provider_status === "configured" && !provider.last_error
+      ? "Official diesel feed healthy"
+      : "Official diesel feed needs attention",
+    diesel_last_scheduled_check: provider.last_check_at,
+    diesel_next_expected_check: provider.next_expected_check_at,
+    diesel_last_provider_success: provider.last_success_at,
+    diesel_last_provider_failure: provider.last_failure_at,
+    diesel_last_provider_error: provider.last_error,
+    diesel_scheduler_status: provider.scheduler_status,
+    toll_feed_health: tollProviderHealthy ? "Official toll feed healthy" : "Official toll feed needs attention",
+    toll_provider_status_rows: tollProviders,
+    toll_catalogue_rows: tollCatalogue,
+    commercial_rate_card_rows: commercialRateCard,
+    standard_equipment_profiles: equipmentProfiles,
+    route_risk_categories: Array.isArray(routeRiskPolicy.categories) ? routeRiskPolicy.categories : [],
+    route_risk_rules: Array.isArray(routeRiskPolicy.rules) ? routeRiskPolicy.rules : [],
+    route_risk_policy_status: Array.isArray(routeRiskPolicy.rules) && routeRiskPolicy.rules.length
+      ? "Time Trucking route-risk policy configured"
+      : "No Time Trucking risk rule configured/matched",
+    toll_active_plaza_count: tollCatalogue.length,
+    toll_active_tariff_effective_date: tollCatalogue[0]?.effective_from,
+    toll_vat_treatment: "Official toll tariff rows are VAT-inclusive cost inputs; customer quote VAT remains calculated on the final selling price.",
+    diesel_admin_override_price_per_litre: diesel?.manual_override ? diesel?.price_per_litre : null,
+    diesel_manual_override_enabled: dieselConfig.manual_override_enabled ? "true" : "false",
+    fuel_surcharge_enabled: Number(settings.fuel_surcharge_enabled ?? 0) !== 0 ? "true" : "false",
+    diesel_max_age_days: settings.diesel_max_age_days,
+    vehicle_cost_profile_key: vehicle.vehicle_type,
+    fuel_consumption_l_per_100km: vehicle.fuel_consumption_l_per_100km,
+    average_tyre_cost_per_km: vehicle.average_tyre_cost_per_km,
+    maintenance_cost_per_km: vehicle.maintenance_cost_per_km,
+    insurance_cost_per_km: vehicle.insurance_cost_per_km,
+    depreciation_cost_per_km: vehicle.depreciation_cost_per_km,
+    vehicle_overhead_per_km: vehicle.vehicle_overhead_per_km,
+    driver_hourly_wage: driver.driver_hourly_wage,
+    driver_overnight_allowance: driver.driver_overnight_allowance,
+    admin_overhead_percent: overhead.admin_overhead_percent,
+    profit_margin_percent: overhead.profit_margin_percent,
+    vat_percent: overhead.vat_percent,
+    minimum_profit: overhead.minimum_profit,
+    maximum_discount_percent: overhead.maximum_discount_percent,
+    margin_profile_key: margin.margin_key,
+    margin_profile_percent: margin.margin_percent,
+    margin_profile_minimum_profit: margin.minimum_profit,
+    ...settings
+  };
 }
 
 export async function updateRouteEstimateManual(input: {

@@ -123,6 +123,662 @@ test("public RFQ submit button has loading, duplicate-click protection, and succ
   assert.ok(app.includes("if (isFinal && !rfqSubmissionComplete) clearSubmitLoading();"), "button state must recover only after actual creation failure");
 });
 
+test("pricing automation keeps source metadata, business-rule fields, and override warnings", () => {
+  const migration = read("supabase/migrations/20260810005000_pricing_automation_architecture.sql");
+  const pricingPage = read("public/pricing-settings.html");
+  const app = read("src/app.ts");
+
+  for (const expected of [
+    "pricing_external_providers",
+    "za_dmre_cef_diesel",
+    "pricing_source_snapshot",
+    "automation_status",
+    "ttaq_current_diesel_input",
+    "ttaq_record_diesel_provider_result",
+    "grant execute on function public.ttaq_record_diesel_provider_result",
+    "additional_stop_rate",
+    "cross_border_surcharge",
+    "minimum_margin_percent",
+    "warning_flags",
+    "manager_price_override_recorded"
+  ]) {
+    assert.ok(migration.includes(expected), `automation migration should include ${expected}`);
+  }
+
+  assert.ok(pricingPage.includes("Automatic market and route inputs"), "Pricing page should separate external inputs");
+  assert.ok(pricingPage.includes("Time Trucking commercial rules"), "Pricing page should separate commercial rules");
+  assert.ok(pricingPage.includes("Diesel price unavailable - automatic pricing requires review."), "diesel provider status must be transparent until a valid official value is loaded");
+  assert.ok(app.includes("loadPricingSettings"), "Pricing page should load active database values");
+  assert.ok(app.includes("Active database values loaded."), "Pricing page should visibly confirm remote active values loaded");
+  assert.ok(app.includes("Source transparency"), "quote review should show pricing source metadata");
+  assert.ok(app.includes("Resulting profit"), "manager override UI should show resulting profit");
+  assert.ok(app.includes("Resulting margin"), "manager override UI should show resulting margin");
+});
+
+test("official diesel provider uses DMPR source and protects zero-price quoting", () => {
+  const migration = read("supabase/migrations/20260810007000_official_diesel_provider.sql");
+  const edge = read("supabase/functions/production-integrations/index.ts");
+  const pricingPage = read("public/pricing-settings.html");
+
+  for (const expected of [
+    "pricing_diesel_configuration",
+    "preferred_diesel_grade",
+    "diesel_500ppm",
+    "diesel_50ppm",
+    "pricing_basis",
+    "adjustment_type",
+    "manual_override_expires_at",
+    "za_dmpr_official_diesel",
+    "Department of Mineral and Petroleum Resources official diesel publication",
+    "Successful diesel provider result requires a positive price",
+    "Official diesel price outside plausible ZAR/L range",
+    "duplicate_id",
+    "Diesel price unavailable - automatic pricing requires review.",
+    "official_reference_price_per_litre",
+    "effective_diesel_price_per_litre",
+    "Cached official value"
+  ]) {
+    assert.ok(migration.includes(expected), `official diesel migration should include ${expected}`);
+  }
+
+  for (const expected of [
+    "refresh_official_diesel",
+    "DMPR_FUEL_PRICES_URL",
+    "latestDmprPublication",
+    "parseDieselPricesFromText",
+    "centsToRand",
+    "diesel_500ppm",
+    "diesel_50ppm",
+    "deflate-raw",
+    "No valid diesel grade price could be extracted",
+    "ttaq_record_diesel_provider_result",
+    "za_dmpr_official_diesel"
+  ]) {
+    assert.ok(edge.includes(expected), `Edge Function should include ${expected}`);
+  }
+
+  assert.ok(pricingPage.includes("Current effective diesel"), "Pricing UI should show effective diesel");
+  assert.ok(pricingPage.includes("Official reference"), "Pricing UI should show official reference");
+  assert.ok(pricingPage.includes("Preferred diesel grade"), "Pricing UI should let Henning choose a diesel grade");
+  assert.ok(pricingPage.includes("Pricing basis"), "Pricing UI should capture geographic basis");
+  assert.ok(pricingPage.includes("Time Trucking adjustment"), "Pricing UI should capture Time Trucking adjustment");
+  assert.ok(pricingPage.includes("Override expires"), "Pricing UI should support temporary overrides");
+});
+
+test("diesel parser expectations cover grades, unit conversion, outages, and snapshots", () => {
+  const edge = read("supabase/functions/production-integrations/index.ts");
+  const migration = read("supabase/migrations/20260810007000_official_diesel_provider.sql");
+  const pricingMigration = read("supabase/migrations/20260810005000_pricing_automation_architecture.sql");
+  const sample = "Diesel 0.05% sulphur wholesale 2391.57 c/l Diesel 0.005% sulphur wholesale 2429.97 c/l";
+  const centsToRand = (value) => Number((value / 100).toFixed(4));
+  const extracted = [...sample.matchAll(/Diesel\s+(0\.0?05)%[^0-9]+([0-9.]+)\s*c\/l/gi)].map((match) => ({
+    grade: match[1] === "0.005" ? "diesel_50ppm" : "diesel_500ppm",
+    price: centsToRand(Number(match[2]))
+  }));
+
+  assert.deepEqual(extracted, [
+    { grade: "diesel_500ppm", price: 23.9157 },
+    { grade: "diesel_50ppm", price: 24.2997 }
+  ]);
+  assert.ok(edge.includes("effectiveDate"), "provider response should expose effective date");
+  assert.ok(migration.includes("d.effective_from <= current_date"), "future official prices must not become active before effective date");
+  assert.ok(migration.includes("duplicate_id"), "duplicate official publications should update metadata instead of creating daily duplicates");
+  assert.ok(migration.includes("provider_status not in ('success', 'verified', 'live')"), "provider outage should be recorded as a failure");
+  assert.ok(migration.includes("manual_override_expires_at > now()"), "manual override expiry should return control to official value");
+  assert.ok(migration.includes("round(official_price * (1 + adjustment_value / 100), 4)"), "percentage adjustment should recalculate effective diesel");
+  assert.ok(pricingMigration.includes("'diesel', diesel_record.source_payload"), "pricing snapshots should retain diesel source metadata");
+  assert.ok(migration.includes("coalesce(chosen.price_per_litre, 0) <= 0"), "R0 diesel must force manager review");
+});
+
+test("official diesel scheduler uses Vault, pg_cron, pg_net, and secure invocation", () => {
+  const scheduler = read("supabase/migrations/20260810010000_secure_diesel_refresh_scheduler.sql");
+  const edge = read("supabase/functions/production-integrations/index.ts");
+  const pricingPage = read("public/pricing-settings.html");
+  const client = read("src/supabaseClient.ts");
+  const app = read("src/app.ts");
+
+  for (const expected of [
+    "create extension if not exists pg_net",
+    "create extension if not exists pg_cron",
+    "create extension if not exists supabase_vault",
+    "vault.decrypted_secrets",
+    "ttaq_diesel_refresh_secret",
+    "ttaq_supabase_publishable_key",
+    "ttaq_trigger_official_diesel_refresh",
+    "net.http_post",
+    "cron.schedule",
+    "17 4 * * *",
+    "pricing_provider_refresh_runs",
+    "last_check_at",
+    "next_expected_check_at",
+    "scheduler_status",
+    "grant execute on function public.ttaq_trigger_official_diesel_refresh(text) to service_role"
+  ]) {
+    assert.ok(scheduler.includes(expected), `scheduler migration should include ${expected}`);
+  }
+
+  assert.ok(edge.includes("install_diesel_scheduler"), "Edge Function should install scheduler from server-side env secrets");
+  assert.ok(edge.includes("diesel_scheduler_status"), "Edge Function should expose secret-protected scheduler health verification");
+  assert.ok(edge.includes("trigger_diesel_scheduler_once"), "Edge Function should support secret-protected scheduler test trigger");
+  assert.ok(edge.includes("Diesel scheduler installation requires the server-side refresh secret."), "scheduler install must require server-side secret");
+  assert.ok(edge.includes("Diesel scheduler status requires the server-side refresh secret."), "scheduler status must require server-side secret");
+  assert.ok(edge.includes("refreshOfficialDiesel"), "manual and scheduled refresh should use same provider workflow");
+  assert.ok(client.includes("refreshOfficialDieselPrice"), "client should expose an authorised manual refresh action");
+  assert.ok(app.includes("refreshOfficialDieselButton"), "Pricing UI should wire manual refresh");
+  assert.ok(pricingPage.includes("Check for latest official diesel price"), "Pricing UI should include manual refresh button");
+  assert.ok(pricingPage.includes("Official diesel feed needs attention"), "Pricing UI should show simple provider health");
+  assert.ok(client.includes("Official diesel feed healthy"), "Pricing loader should populate healthy provider state");
+
+  for (const browserFile of ["src/app.ts", "src/supabaseClient.ts", "public/pricing-settings.html"]) {
+    assert.equal(read(browserFile).includes("DIESEL_REFRESH_SECRET"), false, `${browserFile} must not expose refresh secret name/value`);
+    assert.equal(read(browserFile).includes("ttaq_diesel_refresh_secret"), false, `${browserFile} must not reference Vault secret names`);
+  }
+});
+
+test("official toll engine models providers, plazas, Class 1-4 tariffs, and VAT-inclusive snapshots", () => {
+  const migration = read("supabase/migrations/20260810013000_official_toll_pricing_engine.sql");
+  const edge = read("supabase/functions/production-integrations/index.ts");
+  const pricingPage = read("public/pricing-settings.html");
+  const app = read("src/app.ts");
+  const client = read("src/supabaseClient.ts");
+
+  for (const expected of [
+    "toll_plazas",
+    "toll_tariffs",
+    "class_1_rate",
+    "class_2_rate",
+    "class_3_rate",
+    "class_4_rate",
+    "vat_included boolean not null default true",
+    "effective_from date not null",
+    "effective_to date",
+    "toll_class integer",
+    "Toll vehicle class requires confirmation.",
+    "za_sanral_official_tolls",
+    "za_bakwena_official_tolls",
+    "za_trac_n4_official_tolls",
+    "za_n3tc_official_tolls",
+    "2026-03-01",
+    "Bakwena toll tariffs applicable from 1 March 2026 to 28 February 2027",
+    "ttaq_calculate_official_route_tolls",
+    "toll_free_route",
+    "manual_review_required",
+    "missing_applicable_tariff",
+    "official tariffs are VAT-inclusive cost inputs",
+    "toll_pricing_overrides",
+    "management_override"
+  ]) {
+    assert.ok(migration.includes(expected), `toll migration should include ${expected}`);
+  }
+
+  for (const expected of [
+    "decodePolyline",
+    "distanceToSegmentMeters",
+    "matchOfficialTollPlazas",
+    "toll_plaza_matching",
+    "route_segment_index",
+    "new Map(matches.map",
+    "refresh_official_tolls",
+    "install_toll_scheduler",
+    "Toll scheduler installation requires the server-side refresh secret."
+  ]) {
+    assert.ok(edge.includes(expected), `Edge Function should include ${expected}`);
+  }
+
+  assert.ok(pricingPage.includes("Toll tariff source status"), "Pricing page should show toll provider status");
+  assert.ok(pricingPage.includes("Toll plaza catalogue"), "Pricing page should show toll plaza catalogue");
+  assert.ok(pricingPage.includes("Equipment toll classes") || app.includes("Toll class requires confirmation"), "Pricing UI should expose equipment toll class state");
+  assert.ok(app.includes("Toll calculation"), "Quote Review should show toll calculation details");
+  assert.ok(app.includes("Detected plazas"), "Quote Review should show detected plaza count");
+  assert.ok(client.includes("ttaq_toll_provider_status"), "Pricing loader should fetch toll provider health from DB");
+  assert.ok(client.includes("ttaq_current_toll_catalogue"), "Pricing loader should fetch active toll catalogue from DB");
+
+  for (const browserFile of ["src/app.ts", "src/supabaseClient.ts", "public/pricing-settings.html"]) {
+    assert.equal(read(browserFile).includes("ttaq_diesel_refresh_secret"), false, `${browserFile} must not expose Vault secret names`);
+    assert.equal(read(browserFile).includes("DIESEL_REFRESH_SECRET"), false, `${browserFile} must not expose refresh secret names`);
+  }
+});
+
+test("toll route matching guards nearby false positives, duplicate plazas, toll-free routes, and unknown toll data", () => {
+  const migration = read("supabase/migrations/20260810013000_official_toll_pricing_engine.sql");
+  const hardening = read("supabase/migrations/20260810013200_authoritative_toll_coverage_hardening.sql");
+  const edge = read("supabase/functions/production-integrations/index.ts");
+
+  assert.ok(edge.includes("plaza.plaza_type === \"ramp\" ? 650 : 1200"), "ramp and mainline plazas should use route-geometry thresholds");
+  assert.ok(edge.includes("distanceToSegmentMeters(point, route[index], route[index + 1])"), "plaza matching should use actual route geometry");
+  assert.ok(edge.includes("[...new Map(matches.map"), "duplicate plaza matches should be prevented");
+  assert.ok(edge.includes("match_confidence"), "matched plazas should include confidence metadata");
+  assert.ok(edge.includes("route_order"), "matched plazas should include route order");
+  assert.ok(migration.includes("match_status = 'matched' and match_count = 0"), "matched routes with no plazas should be toll-free");
+  assert.ok(migration.includes("Toll amount unknown because route/plaza matching did not complete."), "unknown data should force review");
+  assert.ok(migration.includes("provider_toll_status in ('available', 'expected_unknown')"), "Google toll metadata without trusted amount should remain review metadata");
+  assert.ok(migration.includes("A matched toll plaza has no current official tariff."), "missing tariff rows should force review");
+  assert.ok(hardening.includes("coverage_status in ('complete', 'partial', 'unavailable', 'needs_review')"), "providers should expose explicit coverage status");
+  assert.ok(hardening.includes("provider.coverage_status = 'complete'"), "automatic pricing should require complete provider coverage");
+  assert.ok(hardening.includes("Toll pricing requires review - official coverage incomplete."), "incomplete coverage should force manager review");
+  assert.ok(hardening.includes("provider_toll_status in ('available', 'expected_unknown')"), "Google toll advisory with no official match should not become toll-free");
+  assert.ok(hardening.includes("suggested_toll_class"), "equipment profiles should carry suggested toll-class workflow state");
+  assert.ok(hardening.includes("toll_class_review_required"), "unconfirmed toll classes should remain review-required");
+});
+
+test("route-risk policy engine separates configured policy from route evidence", () => {
+  const migration = read("supabase/migrations/20260810013300_route_risk_policy_engine.sql");
+  const edge = read("supabase/functions/production-integrations/index.ts");
+  const pricingPage = read("public/pricing-settings.html");
+  const app = read("src/app.ts");
+  const client = read("src/supabaseClient.ts");
+
+  for (const expected of [
+    "route_risk_categories",
+    "route_risk_overrides",
+    "trigger_scope",
+    "rule_type",
+    "geofence",
+    "corridor",
+    "priority",
+    "effective_from",
+    "effective_to",
+    "source_status",
+    "time_trucking_configured_policy",
+    "external_advisory_only",
+    "ttaq_evaluate_route_risk_policy",
+    "ttaq_point_in_polygon",
+    "ttaq_degrees_distance_km",
+    "ttaq_route_points",
+    "Highest-priority",
+    "Route risk could not be fully evaluated",
+    "R0 because no active Time Trucking route-risk rule matched.",
+    "No Time Trucking risk rule configured/matched.",
+    "ttaq_record_route_risk_override",
+    "route_risk_override_recorded",
+    "grant execute on function public.ttaq_record_route_risk_override"
+  ]) {
+    assert.ok(migration.includes(expected), `route-risk migration should include ${expected}`);
+  }
+
+  assert.ok(edge.includes("route_path_points"), "route automation should store sampled route geometry");
+  assert.ok(edge.includes("route_geometry_status"), "route automation should state geometry availability");
+  assert.ok(edge.includes("sampledRoutePoints"), "Edge Function should sample route points for geofence evaluation");
+  assert.ok(pricingPage.includes("Route Risk"), "Pricing Settings should expose Route Risk policy section");
+  assert.ok(pricingPage.includes("Highest-priority matching rule wins"), "Pricing Settings should disclose deterministic conflict handling");
+  assert.ok(app.includes("Route Risk"), "Quote Review should show route risk analysis");
+  assert.ok(app.includes("Matched rule"), "Quote Review should show controlling route-risk rule");
+  assert.ok(app.includes("Override risk amount"), "Quote Review should include management override controls");
+  assert.ok(client.includes("ttaq_route_risk_policy_summary"), "Pricing loader should fetch route-risk policy summary");
+  assert.ok(client.includes("recordRouteRiskOverride"), "Client should expose route-risk override RPC");
+});
+
+function composePricingEnrichment({
+  originalBaseBeforeSeasonal,
+  oldToll,
+  finalToll,
+  oldRisk,
+  fixedRisk,
+  riskPercent,
+  seasonalMultiplier,
+  adminOverheadPercent,
+  marginPercent,
+  minimumProfit,
+  vatPercent,
+  minimumSellingPrice = 0
+}) {
+  const round = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
+  const tollDelta = finalToll - oldToll;
+  const routeRiskBase = Math.max(originalBaseBeforeSeasonal - oldRisk + tollDelta, 0);
+  const finalRisk = round(fixedRisk + routeRiskBase * (riskPercent / 100));
+  const riskDelta = finalRisk - oldRisk;
+  const finalBaseBeforeSeasonal = Math.max(routeRiskBase + finalRisk, 0);
+  const seasonalAmount = round(finalBaseBeforeSeasonal * (seasonalMultiplier - 1));
+  const subtotalBeforeOverhead = finalBaseBeforeSeasonal + seasonalAmount;
+  const companyOverhead = round(subtotalBeforeOverhead * (adminOverheadPercent / 100));
+  const subtotal = round(subtotalBeforeOverhead + companyOverhead);
+  const profit = Math.max(round(subtotal * (marginPercent / 100)), minimumProfit, 0);
+  const vat = round((subtotal + profit) * (vatPercent / 100));
+  const grandTotalBeforeFloor = subtotal + profit + vat;
+  const grandTotal = minimumSellingPrice > 0 && grandTotalBeforeFloor < minimumSellingPrice
+    ? minimumSellingPrice
+    : grandTotalBeforeFloor;
+
+  return {
+    tollDelta,
+    riskDelta,
+    combinedDelta: tollDelta + riskDelta,
+    routeRiskBase,
+    finalRisk,
+    finalBaseBeforeSeasonal,
+    seasonalAmount,
+    companyOverhead,
+    subtotal,
+    profit,
+    vat,
+    grandTotal
+  };
+}
+
+test("pricing enrichment finalisation composes toll and route-risk deltas deterministically", () => {
+  const migration = read("supabase/migrations/20260810013400_fix_pricing_enrichment_composition.sql");
+
+  for (const expected of [
+    "ttaq_apply_pricing_enrichments",
+    "for update",
+    "drop trigger if exists ttaq_apply_official_toll_pricing_enrichment",
+    "drop trigger if exists ttaq_apply_route_risk_policy_enrichment",
+    "create trigger ttaq_apply_pricing_enrichments",
+    "toll_delta_amount := final_toll_amount - old_toll_amount",
+    "route_risk_delta_amount := final_route_risk_amount - old_route_risk_amount",
+    "combined_component_delta := toll_delta_amount + route_risk_delta_amount",
+    "route_risk_base_amount := greatest(original_base_before_seasonal - old_route_risk_amount + toll_delta_amount, 0)",
+    "final_base_before_seasonal := greatest(route_risk_base_amount + final_route_risk_amount, 0)",
+    "seasonal_multiplier",
+    "company_overhead_amount",
+    "minimum_profit",
+    "minimum_selling_price",
+    "pricing_order",
+    "recommended_selling_price"
+  ]) {
+    assert.ok(migration.includes(expected), `composition migration should include ${expected}`);
+  }
+
+  assert.equal(
+    migration.match(/create trigger ttaq_apply_pricing_enrichments/g).length,
+    1,
+    "only one finalisation trigger should be created"
+  );
+
+  const noTollNoRisk = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 0,
+    finalToll: 0,
+    oldRisk: 0,
+    fixedRisk: 0,
+    riskPercent: 0,
+    seasonalMultiplier: 1,
+    adminOverheadPercent: 0,
+    marginPercent: 10,
+    minimumProfit: 0,
+    vatPercent: 15
+  });
+  assert.equal(noTollNoRisk.finalBaseBeforeSeasonal, 1000, "no toll + no route risk should leave base unchanged");
+
+  const tollOnly = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 0,
+    finalToll: 200,
+    oldRisk: 0,
+    fixedRisk: 0,
+    riskPercent: 0,
+    seasonalMultiplier: 1,
+    adminOverheadPercent: 0,
+    marginPercent: 10,
+    minimumProfit: 0,
+    vatPercent: 15
+  });
+  assert.equal(tollOnly.finalBaseBeforeSeasonal, 1200, "toll-only should add toll exactly once");
+
+  const riskOnly = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 0,
+    finalToll: 0,
+    oldRisk: 0,
+    fixedRisk: 125,
+    riskPercent: 0,
+    seasonalMultiplier: 1,
+    adminOverheadPercent: 0,
+    marginPercent: 10,
+    minimumProfit: 0,
+    vatPercent: 15
+  });
+  assert.equal(riskOnly.finalBaseBeforeSeasonal, 1125, "route-risk-only should add route risk exactly once");
+
+  const tollAndFixedRisk = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 100,
+    finalToll: 250,
+    oldRisk: 50,
+    fixedRisk: 90,
+    riskPercent: 0,
+    seasonalMultiplier: 1,
+    adminOverheadPercent: 0,
+    marginPercent: 10,
+    minimumProfit: 0,
+    vatPercent: 15
+  });
+  assert.equal(tollAndFixedRisk.combinedDelta, 190, "toll + fixed risk should compose explicit deltas");
+  assert.equal(tollAndFixedRisk.finalBaseBeforeSeasonal, 1190, "toll + fixed risk should not drop either component");
+
+  const tollAndPercentRisk = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 100,
+    finalToll: 250,
+    oldRisk: 50,
+    fixedRisk: 0,
+    riskPercent: 10,
+    seasonalMultiplier: 1,
+    adminOverheadPercent: 0,
+    marginPercent: 10,
+    minimumProfit: 0,
+    vatPercent: 15
+  });
+  assert.equal(tollAndPercentRisk.routeRiskBase, 1100, "percentage route risk should use the toll-adjusted pre-risk base");
+  assert.equal(tollAndPercentRisk.finalRisk, 110, "percentage route risk should calculate from toll-adjusted base");
+  assert.equal(tollAndPercentRisk.finalBaseBeforeSeasonal, 1210, "toll + percentage route risk should compose");
+
+  const tollAndFixedAndPercentRisk = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 100,
+    finalToll: 250,
+    oldRisk: 50,
+    fixedRisk: 90,
+    riskPercent: 10,
+    seasonalMultiplier: 1.05,
+    adminOverheadPercent: 8,
+    marginPercent: 12,
+    minimumProfit: 175,
+    vatPercent: 15
+  });
+  assert.equal(tollAndFixedAndPercentRisk.routeRiskBase, 1100, "Bakwena automatic toll + route-risk rule should price risk after official toll");
+  assert.equal(tollAndFixedAndPercentRisk.finalRisk, 200, "fixed and percentage risk components should compose");
+  assert.equal(tollAndFixedAndPercentRisk.finalBaseBeforeSeasonal, 1300, "automatic toll and route risk should both remain in base");
+  assert.equal(Math.round(tollAndFixedAndPercentRisk.grandTotal * 100) / 100, 1898.77, "downstream season, overhead, minimum profit, and VAT should be recalculated once");
+
+  const tollOverrideAndRisk = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 100,
+    finalToll: 300,
+    oldRisk: 0,
+    fixedRisk: 75,
+    riskPercent: 5,
+    seasonalMultiplier: 1,
+    adminOverheadPercent: 0,
+    marginPercent: 10,
+    minimumProfit: 0,
+    vatPercent: 15
+  });
+  assert.equal(tollOverrideAndRisk.finalBaseBeforeSeasonal, 1335, "manual toll override + route risk should both be included");
+
+  const riskOverrideAndAutomaticToll = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 0,
+    finalToll: 180,
+    oldRisk: 40,
+    fixedRisk: 95,
+    riskPercent: 0,
+    seasonalMultiplier: 1,
+    adminOverheadPercent: 0,
+    marginPercent: 10,
+    minimumProfit: 0,
+    vatPercent: 15
+  });
+  assert.equal(riskOverrideAndAutomaticToll.finalBaseBeforeSeasonal, 1235, "route-risk override + automatic toll should both be included");
+
+  const firstRun = composePricingEnrichment({
+    originalBaseBeforeSeasonal: 1000,
+    oldToll: 100,
+    finalToll: 250,
+    oldRisk: 50,
+    fixedRisk: 90,
+    riskPercent: 10,
+    seasonalMultiplier: 1.05,
+    adminOverheadPercent: 8,
+    marginPercent: 12,
+    minimumProfit: 175,
+    vatPercent: 15
+  });
+  const secondRun = composePricingEnrichment({
+    originalBaseBeforeSeasonal: firstRun.finalBaseBeforeSeasonal,
+    oldToll: 250,
+    finalToll: 250,
+    oldRisk: firstRun.finalRisk,
+    fixedRisk: 90,
+    riskPercent: 10,
+    seasonalMultiplier: 1.05,
+    adminOverheadPercent: 8,
+    marginPercent: 12,
+    minimumProfit: 175,
+    vatPercent: 15
+  });
+  assert.deepEqual(secondRun, { ...firstRun, tollDelta: 0, riskDelta: 0, combinedDelta: 0 }, "repeated finalisation should be idempotent");
+});
+
+test("internal quote review exposes auditable pricing formulas without customer-facing leakage", () => {
+  const app = read("src/app.ts");
+  const axleMigration = read("supabase/migrations/20260810013600_store_henning_default_axle_configurations.sql");
+  const commercialMigration = read("supabase/migrations/20260810013700_commercial_rate_card_pricing.sql");
+  const publicQuote = read("public/quote-view.html") + read("public/quote-response.html") + read("public/customer-portal.html");
+
+  for (const expected of [
+    "renderPricingAuditView",
+    "Calculation Breakdown / Pricing Audit",
+    "Actual calculation order",
+    "Technical Source Details",
+    "Source / class",
+    "Effective / fallback",
+    "timeTruckingDefaultAxles",
+    "Night out allowance",
+    "Henning confirmed rule",
+    "Current stored overnight rate differs from R1,750.",
+    "Diesel audit",
+    "Toll classification audit",
+    "Profit/minimum-profit protection changes the selling price",
+    "Dangerous goods also triggered a separate hazmat surcharge",
+    "pricing_source_snapshot",
+    "dynamic_outputs",
+    "A. Commercial Selling Price",
+    "B. External/Trip Charges",
+    "C. Internal Estimated Operating Cost",
+    "D. Profitability Analysis",
+    "E. Data Sources / Technical Audit",
+    "F. Warnings / Pending Rules",
+    "Internal costs are retained for profitability analysis only"
+  ]) {
+    assert.ok(app.includes(expected), `internal pricing audit should include ${expected}`);
+  }
+
+  assert.ok(app.includes("renderPricingAuditView(request, calculation, breakdowns)"), "Quote Review should render the internal audit from stored calculation data");
+  assert.equal(publicQuote.includes("Calculation Breakdown / Pricing Audit"), false, "Customer quote pages must not expose internal pricing audit labels");
+  assert.ok(axleMigration.includes("Henning confirmed: 1 Ton = 2 axles"), "axle metadata should store Henning's 1 Ton default");
+  assert.ok(axleMigration.includes("Henning confirmed: Semi = 9 axles"), "axle metadata should store Henning's Semi default for matching equipment");
+  assert.ok(axleMigration.includes("Henning confirmed: S/L = 10 axles"), "axle metadata should store Henning's S/L default for matching equipment");
+  assert.ok(axleMigration.includes("Axle count is stored for audit/classification evidence only"), "axle metadata must not silently change toll class pricing");
+  assert.equal(axleMigration.includes("toll_class ="), false, "axle metadata migration must not change toll_class pricing selectors");
+  assert.ok(commercialMigration.includes("time_trucking_commercial_rate_card"), "commercial rate card should be stored in an explicit table");
+  assert.ok(commercialMigration.includes("'pricing-v3-commercial-rate-card'"), "new authoritative path should use the commercial rate-card pricing version");
+  assert.ok(commercialMigration.includes("'semi', 'Semi', false, 8000.00, 18.0000, 9"), "Semi non-HAZ rate should be seeded from Henning's rate card");
+  assert.ok(commercialMigration.includes("'semi', 'Semi HAZ', true, 8500.00, 18.0000, 9"), "Semi HAZ rate should be seeded from Henning's rate card");
+  assert.ok(commercialMigration.includes("'superlink', 'S/L', false, 8500.00, 18.0000, 10"), "S/L non-HAZ rate should be seeded from Henning's rate card");
+  assert.ok(commercialMigration.includes("'additional_stop_rate', 1500.0000"), "additional stop rate should be configured at R1,500");
+  assert.ok(commercialMigration.includes("'night_out_rate', 1750.0000"), "night-out rate should be configured at R1,750");
+  assert.ok(commercialMigration.includes("'commercial_rate_basis_rule', 0.0000"), "day-vs-km selection should remain pending instead of guessed");
+  assert.ok(commercialMigration.includes("DAY VS KM PRICING RULE REQUIRES HENNING CONFIRMATION"), "pending day-vs-km warning should be explicit");
+  assert.ok(commercialMigration.includes("diesel_selling_adjustment_amount := 0"), "diesel variance should not automatically alter selling price");
+  assert.ok(commercialMigration.includes("hazmat_amount := 0"), "HAZ rate should not stack a generic hazmat surcharge");
+  assert.ok(commercialMigration.includes("internal_operating_cost := fuel_amount + tyres_amount + maintenance_amount + insurance_amount + depreciation_amount + driver_amount + vehicle_overhead_amount"), "operating-cost model should remain internal analysis");
+  assert.ok(commercialMigration.includes("Internal operating-cost analysis only"), "internal cost lines should be labelled as non-selling-price");
+  assert.equal(commercialMigration.includes("base_cost_value := fuel_amount +"), false, "commercial selling price must not be rebuilt from fuel/tyres/maintenance/depreciation");
+});
+
+test("commercial rate-card pricing keeps customer selling price separate from internal cost build", () => {
+  const migration = read("supabase/migrations/20260810013700_commercial_rate_card_pricing.sql");
+
+  for (const expected of [
+    "Commercial base - per-km scenario",
+    "Commercial base - per-day scenario",
+    "Selected commercial base",
+    "Pending approved rule",
+    "Normal profit is included in Henning commercial rate",
+    "10% protection pending exact Time Trucking definition",
+    "driver_overnight_allowance = 1750.00",
+    "rate_category_key = rate_category_value",
+    "hazardous = hazmat_required"
+  ]) {
+    assert.ok(migration.includes(expected), `commercial pricing migration should include ${expected}`);
+  }
+
+  const subtotalExpression = "subtotal_value := commercial_base_amount + diesel_selling_adjustment_amount + additional_stop_amount + night_out_amount + cross_border_amount";
+  assert.ok(migration.includes(subtotalExpression), "commercial subtotal should start from commercial base plus approved trip/business charges");
+  assert.equal(migration.includes("subtotal_value := fuel_amount"), false, "commercial subtotal must not start from operating fuel cost");
+  assert.equal(migration.includes("profit_value := greatest"), false, "normal margin/minimum profit must not be added on top of Henning rates");
+  assert.equal(migration.includes("floor(coalesce(estimated_duration_hours"), false, "night-out count must not keep the old floor(duration / 24) trigger");
+});
+
+test("pricing settings UI is rebuilt around commercial pricing, not cost-build selling price", () => {
+  const page = read("public/pricing-settings.html");
+  const app = read("src/app.ts");
+  const client = read("src/supabaseClient.ts");
+  const migration = read("supabase/migrations/20260810013800_save_commercial_pricing_settings.sql");
+  const publicQuote = read("public/quote-view.html") + read("public/quote-response.html") + read("public/customer-portal.html");
+
+  for (const expected of [
+    "Automatic Quoting Readiness",
+    "Time Trucking Commercial Rate Card",
+    "These are Time Trucking's base customer selling rates",
+    "Commercial Pricing Rules",
+    "Day vs km pricing rule has not yet been confirmed",
+    "Diesel Reference & Adjustment",
+    "Customer selling-price diesel adjustment",
+    "Automatic Toll Pricing",
+    "Additional Commercial Charges",
+    "Additional Hazmat Service Charge",
+    "Internal Operating Cost Analysis",
+    "They do NOT automatically increase the customer selling price",
+    "Equipment & Toll Configuration",
+    "Pricing Data Sources",
+    "Advanced / Legacy / Fallback Settings"
+  ]) {
+    assert.ok(page.includes(expected), `pricing settings page should include ${expected}`);
+  }
+
+  for (const expected of [
+    "renderCommercialRateCardTable",
+    "collectCommercialRateCardEdits",
+    "renderPricingReadiness",
+    "timeTruckingRateCategoryForEquipment",
+    "Mapping requires confirmation",
+    "pricing-v3-commercial-rate-card",
+    "saveCommercialRateCard",
+    "saveCommercialPricingSettings"
+  ]) {
+    assert.ok(app.includes(expected) || client.includes(expected), `pricing settings implementation should include ${expected}`);
+  }
+
+  assert.ok(client.includes("time_trucking_commercial_rate_card"), "pricing settings loader should read the commercial rate-card table");
+  assert.ok(migration.includes("ttaq_save_commercial_pricing_settings"), "commercial settings should have a dedicated save RPC");
+  assert.ok(migration.includes("rule_version = 'pricing-v3-commercial-rate-card'"), "saving settings should preserve the commercial pricing engine version");
+  assert.equal(publicQuote.includes("Internal Operating Cost Analysis"), false, "customer pages must not expose internal operating-cost analysis");
+  assert.equal(publicQuote.includes("Estimated contribution / profitability"), false, "customer pages must not expose profitability analysis");
+});
+
+test("route-risk override RPC uses the project internal user identity model", () => {
+  const migration = read("supabase/migrations/20260810013500_fix_route_risk_override_actor_lookup.sql");
+
+  assert.ok(migration.includes("ttaq_record_route_risk_override"), "override RPC should be replaced by the corrective migration");
+  assert.ok(migration.includes("where id = auth.uid()"), "override actor lookup should use internal_users.id, which references auth.users.id");
+  assert.ok(migration.includes("user_status = 'active'"), "override actor lookup should require an active internal user");
+  assert.ok(migration.includes("ttaq_has_internal_permission(auth.uid(), 'manage_pricing_rules')"), "pricing rule permission should remain required");
+  assert.ok(migration.includes("ttaq_has_internal_permission(auth.uid(), 'manage_rfqs')"), "RFQ management permission should remain accepted");
+  assert.equal(migration.includes("auth_user_id"), false, "override RPC must not reference a nonexistent auth_user_id column");
+});
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }

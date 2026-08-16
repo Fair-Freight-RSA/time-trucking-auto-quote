@@ -267,8 +267,32 @@ export interface StandardEquipmentProfileRecord {
   equipment_source_default: EquipmentSource;
   recommendation_priority: number;
   is_active: boolean;
+  toll_class?: number | null;
+  toll_class_source?: string | null;
+  toll_class_criteria?: Record<string, unknown>;
+  toll_class_confirmed_by?: string | null;
+  toll_class_confirmed_at?: string | null;
+  vehicle_height_m?: number | null;
+  axle_count?: number | null;
+  suggested_toll_class?: number | null;
+  suggested_toll_class_reason?: string | null;
+  toll_class_review_required?: boolean | null;
   notes: string | null;
   source_note: string | null;
+}
+
+export interface CommercialRateCardRecord {
+  id: string;
+  pricing_profile_id: string;
+  rate_category_key: string;
+  display_name: string;
+  hazardous: boolean;
+  day_rate: number;
+  per_km_rate: number;
+  axle_count_default: number | null;
+  source_note: string | null;
+  is_active: boolean;
+  updated_at: string;
 }
 
 export interface EquipmentOverrideHistoryEntry {
@@ -371,6 +395,8 @@ export interface PricingCalculationRecord {
   margin_percent?: number | null;
   dynamic_inputs?: Record<string, unknown>;
   dynamic_outputs?: Record<string, unknown>;
+  pricing_source_snapshot?: Record<string, unknown>;
+  automation_status?: Record<string, unknown>;
   manager_review_required?: boolean | null;
   pricing_breakdowns?: PricingBreakdownRecord[];
   pricing_calculation_audit_events?: PricingCalculationAuditEventRecord[];
@@ -396,6 +422,10 @@ export interface PricingAdjustmentRecord {
   previous_selling_price: number | null;
   adjustment_reason: string;
   adjusted_by: string | null;
+  calculated_cost_snapshot?: number | null;
+  resulting_profit?: number | null;
+  resulting_margin_percent?: number | null;
+  warning_flags?: string[] | null;
   created_at: string;
 }
 

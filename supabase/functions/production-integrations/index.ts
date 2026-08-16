@@ -28,6 +28,12 @@ type IntegrationAction =
   | "create_upload_signed_url"
   | "record_uploaded_document"
   | "auto_route_public_rfq"
+  | "diesel_scheduler_status"
+  | "install_diesel_scheduler"
+  | "install_toll_scheduler"
+  | "refresh_official_diesel"
+  | "refresh_official_tolls"
+  | "trigger_diesel_scheduler_once"
   | "send_quote_email"
   | "send_invoice_email";
 
@@ -44,6 +50,8 @@ const emailFrom = Deno.env.get("EMAIL_FROM_ADDRESS") ?? "";
 const emailFromName = Deno.env.get("EMAIL_FROM_NAME") ?? "Time Trucking";
 const dryRunEmail = (Deno.env.get("EMAIL_DRY_RUN") ?? "").toLowerCase() === "true";
 const googleRoutesApiKey = Deno.env.get("GOOGLE_ROUTES_API_KEY") ?? "";
+const dieselRefreshSecret = Deno.env.get("DIESEL_REFRESH_SECRET") ?? "";
+const dmprFuelPricesUrl = Deno.env.get("DMPR_FUEL_PRICES_URL") ?? "https://www.dmpr.gov.za/Services/Petroleum-Resources/Fuel-Prices";
 
 const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
   auth: { persistSession: false }
@@ -145,6 +153,12 @@ function assertAction(value: unknown): IntegrationAction {
     "create_upload_signed_url",
     "record_uploaded_document",
     "auto_route_public_rfq",
+    "diesel_scheduler_status",
+    "install_diesel_scheduler",
+    "install_toll_scheduler",
+    "refresh_official_diesel",
+    "refresh_official_tolls",
+    "trigger_diesel_scheduler_once",
     "send_quote_email",
     "send_invoice_email"
   ];
@@ -380,11 +394,655 @@ function coordinatePair(location: unknown): { latitude: number | null; longitude
   };
 }
 
+type Coordinate = { latitude: number; longitude: number };
+
+function decodePolyline(polyline: string): Coordinate[] {
+  const points: Coordinate[] = [];
+  let index = 0;
+  let latitude = 0;
+  let longitude = 0;
+  while (index < polyline.length) {
+    let result = 0;
+    let shift = 0;
+    let byte = 0;
+    do {
+      byte = polyline.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20 && index < polyline.length);
+    latitude += (result & 1) ? ~(result >> 1) : (result >> 1);
+
+    result = 0;
+    shift = 0;
+    do {
+      byte = polyline.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20 && index < polyline.length);
+    longitude += (result & 1) ? ~(result >> 1) : (result >> 1);
+    points.push({ latitude: latitude / 1e5, longitude: longitude / 1e5 });
+  }
+  return points;
+}
+
+function toRadians(value: number): number {
+  return value * Math.PI / 180;
+}
+
+function metersBetween(a: Coordinate, b: Coordinate): number {
+  const earthRadius = 6371000;
+  const dLat = toRadians(b.latitude - a.latitude);
+  const dLon = toRadians(b.longitude - a.longitude);
+  const lat1 = toRadians(a.latitude);
+  const lat2 = toRadians(b.latitude);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * earthRadius * Math.asin(Math.sqrt(h));
+}
+
+function distanceToSegmentMeters(point: Coordinate, a: Coordinate, b: Coordinate): number {
+  const latScale = 111320;
+  const lonScale = 111320 * Math.cos(toRadians((a.latitude + b.latitude) / 2));
+  const ax = a.longitude * lonScale;
+  const ay = a.latitude * latScale;
+  const bx = b.longitude * lonScale;
+  const by = b.latitude * latScale;
+  const px = point.longitude * lonScale;
+  const py = point.latitude * latScale;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return metersBetween(point, a);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq));
+  const projected = { longitude: (ax + t * dx) / lonScale, latitude: (ay + t * dy) / latScale };
+  return metersBetween(point, projected);
+}
+
+async function matchOfficialTollPlazas(polyline: string | null): Promise<JsonMap> {
+  if (!polyline) {
+    return { status: "unknown", reason: "Google route polyline unavailable", matches: [] };
+  }
+  const route = decodePolyline(polyline);
+  if (route.length < 2) {
+    return { status: "unknown", reason: "Google route polyline could not be decoded", matches: [] };
+  }
+  const { data, error } = await serviceClient
+    .from("toll_plazas")
+    .select("id,plaza_name,road_route,operator_key,latitude,longitude,plaza_type")
+    .eq("is_active", true)
+    .limit(1000);
+  if (error) throw error;
+  const matches: JsonMap[] = [];
+  for (const plaza of data ?? []) {
+    const point = { latitude: Number(plaza.latitude), longitude: Number(plaza.longitude) };
+    if (!Number.isFinite(point.latitude) || !Number.isFinite(point.longitude)) continue;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    let bestSegment = 0;
+    for (let index = 0; index < route.length - 1; index += 1) {
+      const distance = distanceToSegmentMeters(point, route[index], route[index + 1]);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestSegment = index;
+      }
+    }
+    const thresholdMeters = plaza.plaza_type === "ramp" ? 650 : 1200;
+    if (bestDistance <= thresholdMeters) {
+      const confidenceRatio = Math.max(0, 1 - (bestDistance / thresholdMeters));
+      matches.push({
+        plaza_id: plaza.id,
+        plaza_name: plaza.plaza_name,
+        road_route: plaza.road_route,
+        operator_key: plaza.operator_key,
+        plaza_type: plaza.plaza_type,
+        distance_m: Number(bestDistance.toFixed(1)),
+        match_confidence: confidenceRatio >= 0.75 ? "high" : confidenceRatio >= 0.45 ? "standard" : "low_review",
+        route_segment_index: bestSegment,
+        route_order: bestSegment,
+        direction: plaza.direction ?? null,
+        match_threshold_m: thresholdMeters
+      });
+    }
+  }
+  matches.sort((left, right) => Number(left.route_segment_index ?? 0) - Number(right.route_segment_index ?? 0) || Number(left.distance_m ?? 0) - Number(right.distance_m ?? 0));
+  const deduped = [...new Map(matches.map((match) => [String(match.plaza_id), match])).values()];
+  return {
+    status: "matched",
+    method: "google_overview_polyline_to_official_plaza_coordinates",
+    route_point_count: route.length,
+    match_threshold_note: "Mainline plazas use 1200m and ramp plazas use 650m against actual route geometry.",
+    matches: deduped
+  };
+}
+
+function sampledRoutePoints(polyline: string | null): JsonMap[] {
+  if (!polyline) return [];
+  const points = decodePolyline(polyline);
+  if (points.length <= 160) {
+    return points.map((point, index) => ({
+      point_index: index,
+      latitude: Number(point.latitude.toFixed(6)),
+      longitude: Number(point.longitude.toFixed(6))
+    }));
+  }
+  const step = Math.ceil(points.length / 160);
+  const sampled = points.filter((_, index) => index % step === 0);
+  const last = points[points.length - 1];
+  if (sampled[sampled.length - 1] !== last) sampled.push(last);
+  return sampled.map((point, index) => ({
+    point_index: index,
+    latitude: Number(point.latitude.toFixed(6)),
+    longitude: Number(point.longitude.toFixed(6))
+  }));
+}
+
 function tollStatus(route: JsonMap): string {
   const tollInfo = (route.travelAdvisory as JsonMap | undefined)?.tollInfo as JsonMap | undefined;
   if (!tollInfo) return "unavailable";
   const prices = tollInfo.estimatedPrice ?? tollInfo.estimatedPrices;
   return Array.isArray(prices) && prices.length > 0 ? "available" : "expected_unknown";
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+function monthNumber(month: string): number {
+  const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+  return months.indexOf(month.toLowerCase()) + 1;
+}
+
+function parseEffectiveDate(text: string): string | null {
+  const match = text.match(/effective\s+(?:from\s+)?(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/i);
+  if (!match) return null;
+  const month = monthNumber(match[2]);
+  if (!month) return null;
+  return `${match[3]}-${String(month).padStart(2, "0")}-${String(Number(match[1])).padStart(2, "0")}`;
+}
+
+function absoluteUrl(href: string, baseUrl: string): string {
+  try {
+    return new URL(decodeHtml(href), baseUrl).toString();
+  } catch {
+    return decodeHtml(href);
+  }
+}
+
+function latestDmprPublication(pageHtml: string): { title: string; href: string; effectiveDate: string | null } {
+  const sectionMatch = pageHtml.match(/<h3[^>]*>\s*(Fuel Prices Effective from [^<]+)<\/h3>[\s\S]{0,2500}?<h4[^>]*>\s*([^<]+)\s*<\/h4>[\s\S]{0,1200}?<a\b[^>]*href=["']([^"']+)["']/i);
+  if (sectionMatch) {
+    const heading = normalizeWhitespace(decodeHtml(sectionMatch[1]));
+    const documentTitle = normalizeWhitespace(decodeHtml(sectionMatch[2]));
+    return {
+      title: `${heading} - ${documentTitle}`,
+      href: decodeHtml(sectionMatch[3]),
+      effectiveDate: parseEffectiveDate(heading)
+    };
+  }
+  const anchors = [...pageHtml.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
+    .map((match) => ({
+      href: decodeHtml(match[1]),
+      title: normalizeWhitespace(decodeHtml(match[2].replace(/<[^>]+>/g, " ")))
+    }))
+    .filter((anchor) => /fuel prices?/i.test(anchor.title) && /effective/i.test(anchor.title));
+  const latest = anchors[0];
+  if (!latest) throw new Error("DMPR fuel price publication link was not found.");
+  return { ...latest, effectiveDate: parseEffectiveDate(latest.title) };
+}
+
+function plausibleDieselPrice(value: number): boolean {
+  return Number.isFinite(value) && value >= 5 && value <= 35;
+}
+
+function centsToRand(value: number): number {
+  return Number((value / 100).toFixed(4));
+}
+
+function parseDieselPricesFromText(text: string): Array<{ grade: "diesel_500ppm" | "diesel_50ppm"; pricePerLitre: number; rawValue: number; unit: string; evidence: string }> {
+  const rowResults: Array<{ grade: "diesel_500ppm" | "diesel_50ppm"; pricePerLitre: number; rawValue: number; unit: string; evidence: string }> = [];
+  let currentGrade: "diesel_500ppm" | "diesel_50ppm" | null = null;
+  for (const line of text.split(/\r?\n/).map((row) => normalizeWhitespace(row)).filter(Boolean)) {
+    if (/Diesel\s+0\.005%\s+sul(?:f|ph)ur/i.test(line)) currentGrade = "diesel_50ppm";
+    if (/Diesel\s+0\.05%\s+sul(?:f|ph)ur/i.test(line)) currentGrade = "diesel_500ppm";
+    if (!currentGrade || !/^1A\s*\|/i.test(line)) continue;
+    const columns = line.split("|").map((value) => normalizeWhitespace(value));
+    const raw = Number((columns[1] ?? "").replace(",", "."));
+    const price = centsToRand(raw);
+    if (plausibleDieselPrice(price) && !rowResults.some((result) => result.grade === currentGrade)) {
+      rowResults.push({
+        grade: currentGrade,
+        pricePerLitre: price,
+        rawValue: raw,
+        unit: "c/L",
+        evidence: `DMPR fuel price schedule basic list price row 1A: ${line}`
+      });
+    }
+  }
+  if (rowResults.length) return rowResults;
+
+  const normalized = normalizeWhitespace(text);
+  const results: Array<{ grade: "diesel_500ppm" | "diesel_50ppm"; pricePerLitre: number; rawValue: number; unit: string; evidence: string }> = [];
+
+  for (const target of [
+    { grade: "diesel_500ppm" as const, pattern: /Diesel\s+0\.05%\s+sul(?:f|ph)ur/i },
+    { grade: "diesel_50ppm" as const, pattern: /Diesel\s+0\.005%\s+sul(?:f|ph)ur/i }
+  ]) {
+    const gradeMatch = target.pattern.exec(normalized);
+    if (!gradeMatch) continue;
+    const section = normalized.slice(gradeMatch.index, gradeMatch.index + 2200);
+    const zoneOneMatch = section.match(/\b1A\b\s+([0-9]{4}(?:[.,][0-9]+)?)\s+[0-9]{1,3}(?:[.,][0-9]+)?\s+([0-9]{4}(?:[.,][0-9]+)?)/i);
+    if (!zoneOneMatch) continue;
+    const raw = Number(zoneOneMatch[1].replace(",", "."));
+    const price = centsToRand(raw);
+    if (plausibleDieselPrice(price)) {
+      results.push({
+        grade: target.grade,
+        pricePerLitre: price,
+        rawValue: raw,
+        unit: "c/L",
+        evidence: `DMPR fuel price schedule basic list price for ${target.grade}; zone 1A row also lists wholesale ${zoneOneMatch[2]} c/L.`
+      });
+    }
+  }
+
+  if (results.length) return results;
+
+  const windows = normalized.match(/.{0,140}diesel.{0,260}/gi) ?? [];
+  for (const window of windows) {
+    const grade = /0\.005|50\s*ppm/i.test(window)
+      ? "diesel_50ppm"
+      : /0\.05|500\s*ppm/i.test(window)
+        ? "diesel_500ppm"
+        : null;
+    if (!grade) continue;
+    const matches = [...window.matchAll(/(?:R\s*)?([0-9]{1,2}(?:[.,][0-9]{1,4})|[0-9]{3,4}(?:[.,][0-9]{1,2})?)\s*(c\/?l|cents?\s*\/?\s*l(?:itre)?|rand\s*\/?\s*l(?:itre)?|r\/?l)?/gi)];
+    for (const match of matches) {
+      const raw = Number(match[1].replace(",", "."));
+      const unit = normalizeWhitespace(match[2] ?? "");
+      if (!unit && raw <= 100) continue;
+      const price = /c\/?l|cent/i.test(unit) || raw > 100 ? centsToRand(raw) : raw;
+      if (plausibleDieselPrice(price)) {
+        results.push({ grade, pricePerLitre: price, rawValue: raw, unit: unit || (raw > 100 ? "c/L" : "R/L"), evidence: window.slice(0, 300) });
+        break;
+      }
+    }
+  }
+  const deduped = new Map<string, { grade: "diesel_500ppm" | "diesel_50ppm"; pricePerLitre: number; rawValue: number; unit: string; evidence: string }>();
+  for (const result of results) deduped.set(result.grade, result);
+  return [...deduped.values()];
+}
+
+async function zipEntries(bytes: Uint8Array): Promise<Array<{ name: string; bytes: Uint8Array }>> {
+  const entries: Array<{ name: string; bytes: Uint8Array }> = [];
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 0;
+  while (offset + 30 < bytes.length) {
+    if (view.getUint32(offset, true) !== 0x04034b50) {
+      offset += 1;
+      continue;
+    }
+    const method = view.getUint16(offset + 8, true);
+    const compressedSize = view.getUint32(offset + 18, true);
+    const fileNameLength = view.getUint16(offset + 26, true);
+    const extraLength = view.getUint16(offset + 28, true);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + fileNameLength + extraLength;
+    const name = new TextDecoder().decode(bytes.slice(nameStart, nameStart + fileNameLength));
+    const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+    let entryBytes: Uint8Array | null = null;
+    if (method === 0) {
+      entryBytes = compressed;
+    } else if (method === 8) {
+      const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      entryBytes = new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+    if (entryBytes) entries.push({ name, bytes: entryBytes });
+    offset = dataStart + compressedSize;
+  }
+  return entries;
+}
+
+function xmlPlainText(xml: string): string {
+  return normalizeWhitespace(decodeHtml(xml.replace(/<[^>]+>/g, " ")));
+}
+
+function parseSharedStrings(xml: string): string[] {
+  return [...xml.matchAll(/<si\b[\s\S]*?<\/si>/gi)].map((match) =>
+    normalizeWhitespace([...match[0].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/gi)].map((part) => decodeHtml(part[1])).join(""))
+  );
+}
+
+function parseWorksheetRows(xml: string, shared: string[]): string {
+  const lines: string[] = [];
+  for (const row of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/gi)) {
+    const values: string[] = [];
+    for (const cell of row[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/gi)) {
+      const attrs = cell[1];
+      const body = cell[2];
+      const value = body.match(/<v[^>]*>([\s\S]*?)<\/v>/i)?.[1] ?? "";
+      if (/\bt=["']s["']/i.test(attrs)) {
+        values.push(shared[Number(value)] ?? "");
+      } else if (/\bt=["']inlineStr["']/i.test(attrs)) {
+        values.push(xmlPlainText(body));
+      } else {
+        values.push(normalizeWhitespace(value));
+      }
+    }
+    const line = values.filter(Boolean).join(" | ");
+    if (line) lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+async function parseSpreadsheetText(bytes: Uint8Array): Promise<string> {
+  const entries = await zipEntries(bytes);
+  const sharedEntry = entries.find((entry) => /xl\/sharedStrings\.xml$/i.test(entry.name));
+  const shared = sharedEntry ? parseSharedStrings(new TextDecoder("utf-8", { fatal: false }).decode(sharedEntry.bytes)) : [];
+  const sheets = entries
+    .filter((entry) => /xl\/worksheets\/sheet[0-9]+\.xml$/i.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return sheets.map((sheet) => parseWorksheetRows(new TextDecoder("utf-8", { fatal: false }).decode(sheet.bytes), shared)).join("\n");
+}
+
+async function parseZipText(bytes: Uint8Array, depth = 0): Promise<string> {
+  const parts: string[] = [];
+  const entries = await zipEntries(bytes);
+  const restrictToFuelSchedule = depth === 0 && entries.some((entry) => /fuel price schedule.*\.xlsx$/i.test(entry.name));
+  for (const entry of entries) {
+    const name = entry.name;
+    if (restrictToFuelSchedule && !/fuel price schedule.*\.xlsx$/i.test(name)) {
+      continue;
+    }
+    if (/\.(xml|txt|csv|html?)$/i.test(name)) {
+      parts.push(new TextDecoder("utf-8", { fatal: false }).decode(entry.bytes));
+    } else if (/\.xlsx$/i.test(name)) {
+      parts.push(await parseSpreadsheetText(entry.bytes));
+    } else if (/\.(docx|zip)$/i.test(name) && depth < 3) {
+      parts.push(await parseZipText(entry.bytes, depth + 1));
+    }
+  }
+  return parts.join("\n")
+    .replace(/<[^>]+>/g, " ")
+    .split(/\r?\n/)
+    .map((line) => normalizeWhitespace(line))
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function publicationText(response: Response): Promise<{ text: string; contentType: string }> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (/zip|spreadsheet|octet-stream/i.test(contentType) || (bytes[0] === 0x50 && bytes[1] === 0x4b)) {
+    return { text: await parseZipText(bytes), contentType };
+  }
+  return { text: new TextDecoder("utf-8", { fatal: false }).decode(bytes), contentType };
+}
+
+async function refreshOfficialDiesel(req: Request, body: JsonMap) {
+  const scheduledSecret = req.headers.get("x-diesel-refresh-secret") ?? String(body.refreshSecret ?? "");
+  const isScheduled = Boolean(dieselRefreshSecret) && scheduledSecret === dieselRefreshSecret;
+  if (!isScheduled) await requireInternal(req, "manage_rfqs");
+
+  const pageResponse = await fetch(dmprFuelPricesUrl, { headers: { "user-agent": "Time Trucking Auto-Quote diesel refresh" } });
+  if (!pageResponse.ok) throw new Error(`DMPR fuel price page returned ${pageResponse.status}.`);
+  const pageHtml = await pageResponse.text();
+  const publication = latestDmprPublication(pageHtml);
+  const sourceUrl = absoluteUrl(publication.href, dmprFuelPricesUrl);
+  const documentResponse = await fetch(sourceUrl, { redirect: "follow", headers: { "user-agent": "Time Trucking Auto-Quote diesel refresh" } });
+  if (!documentResponse.ok) throw new Error(`DMPR fuel price publication returned ${documentResponse.status}.`);
+  const document = await publicationText(documentResponse);
+  const effectiveDate = publication.effectiveDate ?? parseEffectiveDate(document.text);
+  if (!effectiveDate) throw new Error("DMPR effective date could not be validated.");
+  const parsed = parseDieselPricesFromText(document.text);
+  const requestedGrade = String(body.dieselGrade ?? "");
+  const gradeRecord = parsed.find((entry) => entry.grade === requestedGrade) ?? parsed[0];
+  if (!gradeRecord) {
+    await serviceClient.rpc("ttaq_record_diesel_provider_result", {
+      provider_key_value: "za_dmpr_official_diesel",
+      provider_status_value: "failed",
+      provider_price_per_litre_value: null,
+      effective_from_value: effectiveDate,
+      provider_response_value: {
+        source_url: sourceUrl,
+        source_title: publication.title,
+        publication_effective_date: effectiveDate,
+        content_type: document.contentType,
+        raw_source_metadata: { parsed_grade_count: 0 }
+      },
+      error_message_value: "No valid diesel grade price could be extracted from the official DMPR publication."
+    });
+    throw new Error("No valid diesel grade price could be extracted from the official DMPR publication.");
+  }
+
+  const { data, error } = await serviceClient.rpc("ttaq_record_diesel_provider_result", {
+    provider_key_value: "za_dmpr_official_diesel",
+    provider_status_value: "verified",
+    provider_price_per_litre_value: gradeRecord.pricePerLitre,
+    effective_from_value: effectiveDate,
+    provider_response_value: {
+      source_url: sourceUrl,
+      source_title: publication.title,
+      publication_date: effectiveDate,
+      diesel_grade: gradeRecord.grade,
+      pricing_basis: String(body.pricingBasis ?? "unconfigured"),
+      unit: "ZAR/L",
+      raw_value: gradeRecord.rawValue,
+      raw_unit: gradeRecord.unit,
+      conversion: /c/i.test(gradeRecord.unit) ? "cents_per_litre_to_zar_per_litre" : "already_zar_per_litre",
+      content_type: document.contentType,
+      raw_source_metadata: {
+        dmpr_page_url: dmprFuelPricesUrl,
+        source_url: sourceUrl,
+        source_title: publication.title,
+        parsed_grade_count: parsed.length,
+        evidence: gradeRecord.evidence
+      }
+    },
+    error_message_value: null
+  });
+  if (error) throw error;
+  return {
+    status: "verified",
+    dieselIntegrationId: data,
+    source: "DMPR official monthly fuel price publication",
+    sourceUrl,
+    sourceTitle: publication.title,
+    effectiveDate,
+    dieselGrade: gradeRecord.grade,
+    officialReferencePricePerLitre: gradeRecord.pricePerLitre,
+    unit: "ZAR/L"
+  };
+}
+
+async function installDieselScheduler(req: Request, body: JsonMap) {
+  const scheduledSecret = req.headers.get("x-diesel-refresh-secret") ?? String(body.refreshSecret ?? "");
+  if (!dieselRefreshSecret || scheduledSecret !== dieselRefreshSecret) {
+    throw new Error("Diesel scheduler installation requires the server-side refresh secret.");
+  }
+  const publishableKey = anonKey || Object.values(JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") ?? "{}"))[0];
+  if (!publishableKey || typeof publishableKey !== "string") {
+    throw new Error("Supabase publishable key is not available to configure scheduler invocation.");
+  }
+  const { error } = await serviceClient.rpc("ttaq_install_diesel_refresh_schedule", {
+    refresh_secret_value: dieselRefreshSecret,
+    publishable_key_value: publishableKey
+  });
+  if (error) throw error;
+  return {
+    status: "configured",
+    scheduler: "Supabase Cron + pg_net + Vault",
+    schedule: "17 4 * * *",
+    secretStoredInVault: true
+  };
+}
+
+async function refreshOfficialTolls(req: Request, body: JsonMap) {
+  const scheduledSecret = req.headers.get("x-diesel-refresh-secret") ?? String(body.refreshSecret ?? "");
+  const isScheduled = Boolean(dieselRefreshSecret) && scheduledSecret === dieselRefreshSecret;
+  if (!isScheduled) await requireInternal(req, "manage_rfqs");
+
+  const providers = [
+    {
+      providerKey: "za_sanral_official_tolls",
+      sourceUrl: "https://www.nra.co.za/publications/sanral-announces-toll-tariff-adjustment-effective-1-march-2026",
+      titlePattern: /toll tariff adjustment effective 1 march 2026/i,
+      effectiveDate: "2026-03-01",
+      expectedTitle: "SANRAL toll tariff adjustment effective 1 March 2026",
+      mode: "incomplete"
+    },
+    {
+      providerKey: "za_bakwena_official_tolls",
+      sourceUrl: "https://www.bakwena.co.za/tolls-and-tariffs/",
+      titlePattern: /1\s+March\s+2026|28\s+February\s+2027|Stormvoel|Swartruggens/i,
+      effectiveDate: "2026-03-01",
+      expectedTitle: "Bakwena toll tariffs applicable from 1 March 2026 to 28 February 2027",
+      mode: "verified"
+    },
+    {
+      providerKey: "za_trac_n4_official_tolls",
+      sourceUrl: "https://tracn4.co.za/toll-plazas-toll-fees/",
+      titlePattern: /toll fees|1\s+March\s+2026|N4/i,
+      effectiveDate: "2026-03-01",
+      expectedTitle: "TRAC N4 toll fees effective from 1 March 2026",
+      mode: "incomplete"
+    },
+    {
+      providerKey: "za_n3tc_official_tolls",
+      sourceUrl: "https://www.n3tc.co.za/toll-tariffs/",
+      titlePattern: /toll tariffs|1\s+March\s+2026|N3/i,
+      effectiveDate: "2026-03-01",
+      expectedTitle: "N3TC toll fee groups effective from 1 March 2026",
+      mode: "incomplete"
+    }
+  ];
+
+  const results: JsonMap[] = [];
+  for (const provider of providers) {
+    try {
+      const response = await fetch(provider.sourceUrl, { headers: { "user-agent": "Time Trucking Auto-Quote toll tariff refresh" } });
+      if (!response.ok) throw new Error(`Official toll source returned ${response.status}.`);
+      const sourceText = await response.text();
+      const sourceLooksCurrent = provider.titlePattern.test(sourceText);
+      if (!sourceLooksCurrent) throw new Error("Official toll source did not match the expected 2026 publication markers.");
+      const { count, error } = await serviceClient
+        .from("toll_tariffs")
+        .select("id", { count: "exact", head: true })
+        .eq("source_provider", provider.providerKey)
+        .eq("effective_from", provider.effectiveDate);
+      if (error) throw error;
+      const status = provider.mode === "verified" ? "complete" : "partial";
+      const { data: runId, error: recordError } = await serviceClient.rpc("ttaq_record_toll_import_result", {
+        provider_key_value: provider.providerKey,
+        provider_status_value: status,
+        publication_effective_date_value: provider.effectiveDate,
+        publication_title_value: provider.expectedTitle,
+        source_url_value: provider.sourceUrl,
+        imported_plaza_count_value: count ?? 0,
+        provider_response_value: {
+          source_url: provider.sourceUrl,
+          publication_effective_date: provider.effectiveDate,
+          current_publication_detected: true,
+          import_mode: provider.mode,
+          coverage_status: status,
+          note: provider.mode === "verified"
+            ? "Existing official Bakwena tariff rows remain current; duplicate import skipped."
+            : "Provider source is current, but automatic charging remains incomplete until official plaza coordinate/rate rows are loaded."
+        },
+        error_message_value: provider.mode === "verified" ? null : "Official source detected but tariff coverage is incomplete."
+      });
+      if (recordError) throw recordError;
+      results.push({ providerKey: provider.providerKey, status, runId, importedPlazaCount: count ?? 0 });
+    } catch (error) {
+      await serviceClient.rpc("ttaq_record_toll_import_result", {
+        provider_key_value: provider.providerKey,
+        provider_status_value: "failed",
+        publication_effective_date_value: provider.effectiveDate,
+        publication_title_value: provider.expectedTitle,
+        source_url_value: provider.sourceUrl,
+        imported_plaza_count_value: 0,
+        provider_response_value: { source_url: provider.sourceUrl },
+        error_message_value: errorMessage(error, "Official toll source check failed.")
+      });
+      results.push({ providerKey: provider.providerKey, status: "failed", error: errorMessage(error) });
+    }
+  }
+  return {
+    status: results.some((result) => result.status === "failed") ? "needs_attention" : "checked",
+    source: "Official toll operator/source publications",
+    schedule: "Weekly source check through Supabase Cron, pg_net, and Vault secret invocation",
+    results
+  };
+}
+
+async function installTollScheduler(req: Request, body: JsonMap) {
+  const scheduledSecret = req.headers.get("x-diesel-refresh-secret") ?? String(body.refreshSecret ?? "");
+  if (!dieselRefreshSecret || scheduledSecret !== dieselRefreshSecret) {
+    throw new Error("Toll scheduler installation requires the server-side refresh secret.");
+  }
+  const { error } = await serviceClient.rpc("ttaq_install_toll_refresh_schedule");
+  if (error) throw error;
+  return {
+    status: "configured",
+    scheduler: "Supabase Cron + pg_net + Vault",
+    schedule: "23 5 * * 1",
+    secretStoredInVault: true
+  };
+}
+
+function requireDieselRefreshSecret(req: Request, body: JsonMap): void {
+  const scheduledSecret = req.headers.get("x-diesel-refresh-secret") ?? String(body.refreshSecret ?? "");
+  if (!dieselRefreshSecret || scheduledSecret !== dieselRefreshSecret) {
+    throw new Error("Diesel scheduler status requires the server-side refresh secret.");
+  }
+}
+
+async function triggerDieselSchedulerOnce(req: Request, body: JsonMap) {
+  requireDieselRefreshSecret(req, body);
+  const { data, error } = await serviceClient.rpc("ttaq_trigger_official_diesel_refresh", {
+    trigger_source_value: "manual_scheduler_test"
+  });
+  if (error) throw error;
+  return { status: "queued", requestId: data };
+}
+
+async function dieselSchedulerStatus(req: Request, body: JsonMap) {
+  requireDieselRefreshSecret(req, body);
+  const [
+    providerResult,
+    runsResult,
+    officialResult,
+    schedulerResult,
+    activeProfileResult
+  ] = await Promise.all([
+    serviceClient.from("pricing_external_providers").select("provider_key,provider_status,scheduler_status,last_check_at,next_expected_check_at,last_success_at,last_failure_at,last_error,last_publication_effective_date,last_publication_title").eq("provider_key", "za_dmpr_official_diesel").maybeSingle(),
+    serviceClient.from("pricing_provider_refresh_runs").select("provider_key,trigger_source,request_id,status,requested_at").eq("provider_key", "za_dmpr_official_diesel").order("requested_at", { ascending: false }).limit(5),
+    serviceClient.from("diesel_price_integrations").select("id,diesel_grade,official_reference_price_per_litre,effective_diesel_price_per_litre,effective_from,provider_status,validation_status,source_document_title,created_at").eq("provider_name", "za_dmpr_official_diesel").order("created_at", { ascending: false }).limit(8),
+    serviceClient.rpc("ttaq_diesel_scheduler_status"),
+    serviceClient.rpc("ttaq_active_pricing_profile")
+  ]);
+  for (const result of [providerResult, runsResult, officialResult, schedulerResult, activeProfileResult]) {
+    if (result.error) throw result.error;
+  }
+  let currentDiesel: unknown = null;
+  const activeProfile = activeProfileResult.data;
+  if (typeof activeProfile === "string") {
+    const { data, error } = await serviceClient.rpc("ttaq_current_diesel_input", { profile_id: activeProfile });
+    if (error) throw error;
+    currentDiesel = data;
+  }
+  return {
+    provider: providerResult.data,
+    recentRuns: runsResult.data,
+    officialRecords: officialResult.data,
+    scheduler: schedulerResult.data,
+    currentDiesel
+  };
 }
 
 async function applyRouteAutomation(input: {
@@ -508,6 +1166,9 @@ async function autoRoutePublicRfq(body: JsonMap) {
         ...coordinatePair(location)
       };
     });
+    const encodedPolyline = (route.polyline as JsonMap | undefined)?.encodedPolyline ? String((route.polyline as JsonMap).encodedPolyline) : null;
+    const tollPlazaMatching = await matchOfficialTollPlazas(encodedPolyline);
+    const routePathPoints = sampledRoutePoints(encodedPolyline);
     const providerResponse = {
       provider: "google_routes",
       method: "routes_api",
@@ -521,9 +1182,12 @@ async function autoRoutePublicRfq(body: JsonMap) {
         status: "OK"
       })),
       stops: stopSummaries,
-      overview_polyline: (route.polyline as JsonMap | undefined)?.encodedPolyline ?? null,
+      overview_polyline: encodedPolyline,
+      route_path_points: routePathPoints,
+      route_geometry_status: routePathPoints.length ? "available" : "unavailable",
       toll_status: tollStatus(route),
       toll_info: (route.travelAdvisory as JsonMap | undefined)?.tollInfo ?? null,
+      toll_plaza_matching: tollPlazaMatching,
       route_risk_status: "default_or_manual",
       warnings: route.warnings ?? [],
       calculated_at: new Date().toISOString()
@@ -725,6 +1389,30 @@ Deno.serve(async (req) => {
 
     if (action === "auto_route_public_rfq") {
       return json(req, 200, await autoRoutePublicRfq(body));
+    }
+
+    if (action === "diesel_scheduler_status") {
+      return json(req, 200, await dieselSchedulerStatus(req, body));
+    }
+
+    if (action === "install_diesel_scheduler") {
+      return json(req, 200, await installDieselScheduler(req, body));
+    }
+
+    if (action === "install_toll_scheduler") {
+      return json(req, 200, await installTollScheduler(req, body));
+    }
+
+    if (action === "refresh_official_diesel") {
+      return json(req, 200, await refreshOfficialDiesel(req, body));
+    }
+
+    if (action === "refresh_official_tolls") {
+      return json(req, 200, await refreshOfficialTolls(req, body));
+    }
+
+    if (action === "trigger_diesel_scheduler_once") {
+      return json(req, 200, await triggerDieselSchedulerOnce(req, body));
     }
 
     if (action === "send_quote_email") {

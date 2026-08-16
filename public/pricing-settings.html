@@ -23,98 +23,235 @@
       </header>
       <main class="content">
         <section class="hero">
-          <p class="eyebrow">Configurable pricing</p>
+          <p class="eyebrow">Commercial pricing control</p>
           <h1>Pricing settings</h1>
-          <p class="muted">Maintain the owner-controlled inputs that feed quote rates: diesel, operating cost profile, route rules, margin, VAT, and surcharges.</p>
+          <p class="muted">Configure what Time Trucking charges customers separately from internal operating-cost and profitability analysis.</p>
         </section>
-        <form class="card" id="pricingSettingsForm">
-          <section class="pricing-source-guide" aria-label="Pricing source guide">
-            <div>
-              <strong>Where quote rates come from</strong>
-              <span>Values on this page are saved as the active pricing profile. Route distance and duration come from Google route intelligence when available; owners can update operational inputs here without changing code.</span>
+
+        <form class="card pricing-settings-page" id="pricingSettingsForm">
+          <section class="pricing-admin-section readiness-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Pricing readiness</p>
+                <h2>Automatic Quoting Readiness</h2>
+                <p>Shows what is ready for automatic commercial quoting and what still needs Henning confirmation.</p>
+                <p class="muted">Automatic market and route inputs are loaded from the active database configuration and route automation evidence.</p>
+              </div>
+              <span class="badge" id="pricingRuleVersionBadge">Loading pricing engine...</span>
             </div>
-            <dl>
-              <div><dt>Fuel</dt><dd>Current diesel, baseline, provider, refresh timestamp, and manual override status.</dd></div>
-              <div><dt>Operating costs</dt><dd>Fuel consumption, tyres, maintenance, insurance, depreciation, vehicle overhead, driver cost, and overnight allowance.</dd></div>
-              <div><dt>Commercial rules</dt><dd>Admin overhead, margin profile, minimum profit, discount guardrail, VAT, quote validity, seasonal multiplier, toll fallback, and route-risk surcharge.</dd></div>
-              <div><dt>Special handling</dt><dd>Permit, escort, hazmat, refrigeration, crane, forklift, and high-value surcharges.</dd></div>
-            </dl>
+            <div id="pricingReadinessList" class="readiness-grid">Loading readiness checks...</div>
           </section>
-          <section class="pricing-source-guide equipment-profile-guide" aria-label="Standard equipment profiles">
-            <div>
-              <strong>Standard equipment catalogue</strong>
-              <span>The equipment engine selects from these active profiles, then pricing uses the selected profile and unit count.</span>
+
+          <section class="pricing-admin-section commercial-primary">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Customer selling price</p>
+                <h2>Time Trucking Commercial Rate Card</h2>
+                <p>These are Time Trucking's base customer selling rates. The quotation engine starts from these commercial rates. Normal operating costs and normal profit are already incorporated into these rates.</p>
+              </div>
+            </div>
+            <div id="commercialRateCardList" class="commercial-rate-card-table">Loading commercial rate card...</div>
+          </section>
+
+          <section class="pricing-admin-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Customer selling price</p>
+                <h2>Commercial Pricing Rules</h2>
+                <p>Time Trucking commercial rules can change the customer selling price after the applicable Time Trucking base rate has been selected.</p>
+              </div>
+            </div>
+            <div class="rule-grid">
+              <article class="rule-card warning-card">
+                <strong>Day vs Per-km Pricing Rule</strong>
+                <span class="flag warning">Pending Henning confirmation</span>
+                <p>Day vs km pricing rule has not yet been confirmed. Automatic quotes requiring this decision must remain review-required.</p>
+                <input name="commercial_rate_basis_rule" type="hidden" value="0" />
+              </article>
+              <article class="rule-card">
+                <strong>Additional collection/delivery stop</strong>
+                <label>Current value<input name="additional_stop_rate" type="number" min="0" step="0.01" /></label>
+                <span class="flag info">Confirmed</span>
+                <p>The initial collection and final delivery are not additional stops. R1,500 applies to each additional collection/delivery stop.</p>
+              </article>
+              <article class="rule-card">
+                <strong>Driver night-out allowance</strong>
+                <label>Confirmed rate<input name="night_out_rate" type="number" min="0" step="0.01" /></label>
+                <input name="night_out_count_default" type="hidden" value="0" />
+                <span class="flag warning">Rate confirmed / automatic trigger pending</span>
+                <p>The R1,750 allowance is added when a driver is required to sleep out. The automatic rule for determining when a night out is required has not yet been confirmed.</p>
+              </article>
+              <article class="rule-card warning-card">
+                <strong>10% Minimum Protection Rule</strong>
+                <span class="flag warning">Pending Henning confirmation</span>
+                <p>Normal profit is already included in the Time Trucking commercial rate card. The 10% rule will not be applied as an additional markup until its exact meaning is confirmed.</p>
+                <input name="commercial_10_percent_protection_enabled" type="hidden" value="0" />
+              </article>
+              <article class="rule-card">
+                <strong>VAT</strong>
+                <label>Configured VAT %<input name="vat_percent" type="number" min="0" step="0.0001" /></label>
+                <p>VAT is applied to the commercial subtotal. If this remains 0%, VAT configuration requires confirmation before automatic customer quoting.</p>
+              </article>
+            </div>
+
+            <div class="subsection-heading">
+              <h3>Diesel Reference & Adjustment</h3>
+              <p>Current diesel information is displayed separately from customer selling-price diesel adjustment.</p>
+            </div>
+            <div class="grid three">
+              <label>Grade<input name="preferred_diesel_grade_display" value="0.005% sulphur / 50 ppm" readonly /></label>
+              <label>Official reference<input name="diesel_base_price_per_litre" type="number" min="0" step="0.0001" readonly /></label>
+              <label>Current effective diesel<input name="fuel_price_per_litre" type="number" min="0" step="0.0001" readonly /></label>
+              <label>Difference R/L<input name="diesel_variance_amount_per_litre" readonly /></label>
+              <label>Difference %<input name="diesel_variance_percent" readonly /></label>
+              <label>Provider<input name="diesel_provider_id" readonly /></label>
+              <label>Effective date<input name="diesel_effective_from" type="date" readonly /></label>
+              <label>Last refreshed<input name="diesel_refreshed_at" type="datetime-local" readonly /></label>
+              <label>Source status<input name="diesel_status_detail" value="Official diesel feed needs attention" readonly /></label>
+              <label>Customer selling-price diesel adjustment<input name="diesel_selling_adjustment_status" value="Pending approved Time Trucking formula" readonly /></label>
+            </div>
+            <p class="muted">Diesel price unavailable - automatic pricing requires review. Preferred diesel grade, pricing basis, Time Trucking adjustment, and override expires remain in advanced settings for authorised administrators.</p>
+            <p class="muted">Raw litres x diesel price remains internal cost analysis only. Current diesel below baseline does not reduce Henning's commercial rate unless an approved rule says to.</p>
+            <button id="refreshOfficialDieselButton" class="secondary" type="button">Check for latest official diesel price</button>
+
+            <div class="subsection-heading">
+              <h3>Automatic Toll Pricing</h3>
+              <p>Incomplete classification or tariff coverage requires review instead of silently using R0.</p>
+            </div>
+            <h4>Toll tariff source status</h4>
+            <div class="grid three">
+              <label>Automation status<input name="toll_feed_health" readonly /></label>
+              <label>Active official toll plazas<input name="toll_active_plaza_count" readonly /></label>
+              <label>Tariff effective date<input name="toll_active_tariff_effective_date" type="date" readonly /></label>
+              <label>Toll VAT treatment<input name="toll_vat_treatment" readonly /></label>
+            </div>
+            <div id="tollProviderStatusList" class="equipment-profiles-list">Loading toll provider status...</div>
+            <h4>Toll plaza catalogue</h4>
+            <div id="tollCatalogueList" class="equipment-profiles-list">Loading toll plaza catalogue...</div>
+          </section>
+
+          <section class="pricing-admin-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Customer selling price</p>
+                <h2>Additional Commercial Charges</h2>
+                <p>These charges may be added to the Time Trucking commercial base rate only when an approved rule exists.</p>
+              </div>
+            </div>
+            <div class="rule-grid">
+              <article class="rule-card"><strong>Cross-border</strong><label>Amount<input name="cross_border_surcharge" type="number" min="0" step="0.01" /></label><p>Not configured unless Time Trucking supplies a rule.</p></article>
+              <article class="rule-card"><strong>Seasonal adjustment</strong><label>Normal multiplier<input name="seasonal_normal_multiplier" type="number" min="0" step="0.0001" /></label><p>Seasonal rules remain pending unless active date-specific rules are approved.</p></article>
+              <article class="rule-card"><strong>Route-risk surcharge</strong><label>Fallback amount<input name="default_route_risk_surcharge" type="number" min="0" step="0.01" /></label><p>No unapproved route-risk amount is invented.</p></article>
+              <article class="rule-card"><strong>Permit</strong><label>Amount<input name="permit_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
+              <article class="rule-card"><strong>Escort</strong><label>Amount<input name="escort_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
+              <article class="rule-card"><strong>Refrigeration</strong><label>Amount<input name="refrigeration_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
+              <article class="rule-card"><strong>Crane</strong><label>Amount<input name="crane_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
+              <article class="rule-card"><strong>Forklift</strong><label>Amount<input name="forklift_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
+              <article class="rule-card"><strong>High-value cargo</strong><label>Threshold<input name="high_value_threshold" type="number" min="0" step="0.01" /></label><label>Charge<input name="high_value_surcharge" type="number" min="0" step="0.01" /></label><p>Approved special charge only.</p></article>
+              <article class="rule-card warning-card"><strong>Additional Hazmat Service Charge</strong><label>Optional amount<input name="hazmat_surcharge" type="number" min="0" step="0.01" /></label><p>Normal HAZ pricing selects the HAZ commercial rate. This optional field is only for costs not already represented by the HAZ commercial rate.</p></article>
+            </div>
+          </section>
+
+          <section class="pricing-admin-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Configured policy</p>
+                <h2>Route Risk</h2>
+                <p>Highest-priority matching rule wins. Unknown route geometry or missing approved Time Trucking policy keeps the quote in review instead of assuming a zero surcharge.</p>
+              </div>
+            </div>
+            <div class="grid two">
+              <div>
+                <h4>Route-risk categories</h4>
+                <div id="routeRiskCategoriesList" class="equipment-profiles-list">Loading route-risk categories...</div>
+              </div>
+              <div>
+                <h4>Route-risk rules</h4>
+                <div id="routeRiskRulesList" class="equipment-profiles-list">Loading route-risk rules...</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="pricing-admin-section internal-cost-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Internal only</p>
+                <h2>Internal Operating Cost Analysis</h2>
+                <p>These values are used to estimate Time Trucking's internal trip cost and profitability. They do NOT automatically increase the customer selling price.</p>
+              </div>
+            </div>
+            <div class="profitability-equation">
+              <span>Customer commercial selling price</span>
+              <span>minus</span>
+              <span>Estimated internal operating cost</span>
+              <strong>Estimated contribution / profitability</strong>
+            </div>
+            <div class="grid three">
+              <label>Vehicle cost profile<input name="vehicle_cost_profile_key" value="default" /></label>
+              <label>Fuel consumption L/100km<input name="fuel_consumption_l_per_100km" type="number" min="0" step="0.0001" /></label>
+              <label>Tyre cost R/km<input name="average_tyre_cost_per_km" type="number" min="0" step="0.0001" /></label>
+              <label>Maintenance R/km<input name="maintenance_cost_per_km" type="number" min="0" step="0.0001" /></label>
+              <label>Insurance R/km<input name="insurance_cost_per_km" type="number" min="0" step="0.0001" /></label>
+              <label>Depreciation R/km<input name="depreciation_cost_per_km" type="number" min="0" step="0.0001" /></label>
+              <label>Vehicle overhead R/km<input name="vehicle_overhead_per_km" type="number" min="0" step="0.0001" /></label>
+              <label>Driver hourly cost<input name="driver_hourly_wage" type="number" min="0" step="0.0001" /></label>
+              <label>Driver overnight allowance mirror<input name="driver_overnight_allowance" type="number" min="0" step="0.01" /></label>
+            </div>
+          </section>
+
+          <section class="pricing-admin-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Equipment</p>
+                <h2>Equipment & Toll Configuration</h2>
+                <p>Shows each equipment profile, its Time Trucking rate category status, axle evidence, and toll-class confirmation state.</p>
+              </div>
             </div>
             <div id="equipmentProfilesList" class="equipment-profiles-list">Loading equipment profiles...</div>
           </section>
-          <div class="card-heading"><h2>Fuel and operating cost profile</h2><span>Current value, unit, source, and status</span></div>
-          <div class="grid three">
-            <label>Current diesel price (ZAR/litre)<small>Source: provider or manual override</small><input name="fuel_price_per_litre" type="number" min="0" step="0.0001" /></label>
-            <label>Previous diesel price (ZAR/litre)<small>Source: last saved profile</small><input name="diesel_previous_price_per_litre" type="number" min="0" step="0.0001" /></label>
-            <label>Diesel baseline (ZAR/litre)<small>Used for surcharge comparison</small><input name="diesel_base_price_per_litre" type="number" min="0" step="0.0001" value="24" /></label>
-            <label>Effective date<small>When the diesel input applies</small><input name="diesel_effective_from" type="date" /></label>
-            <label>Provider ID<small>Manual/provider key shown in audit</small><input name="diesel_provider_id" placeholder="manual / provider key" /></label>
-            <label>Last refresh timestamp<small>Shows when the fuel input was updated</small><input name="diesel_refreshed_at" type="datetime-local" /></label>
-            <label>Calculated surcharge %<input name="diesel_surcharge_percent" type="number" min="0" step="0.0001" readonly placeholder="Calculated server-side" /></label>
-            <label>Diesel admin override / litre<input name="diesel_admin_override_price_per_litre" type="number" min="0" step="0.0001" placeholder="Manual fallback price" /></label>
-            <label>Manual override enabled
-              <select name="diesel_manual_override_enabled">
-                <option value="true">Enabled</option>
-                <option value="false">Disabled</option>
-              </select>
-            </label>
-            <label>Fuel surcharge enabled
-              <select name="fuel_surcharge_enabled">
-                <option value="true">Enabled</option>
-                <option value="false">Disabled</option>
-              </select>
-            </label>
-            <label>Vehicle cost profile<input name="vehicle_cost_profile_key" value="default" placeholder="default / 8 ton / lowbed" /></label>
-            <label>Fuel consumption (L/100km)<small>Vehicle operating input</small><input name="fuel_consumption_l_per_100km" type="number" min="0" step="0.0001" /></label>
-            <label>Average tyre cost (ZAR/km)<small>Vehicle operating input</small><input name="average_tyre_cost_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Maintenance cost (ZAR/km)<small>Vehicle operating input</small><input name="maintenance_cost_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Insurance cost (ZAR/km)<small>Vehicle operating input</small><input name="insurance_cost_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Depreciation cost (ZAR/km)<small>Vehicle operating input</small><input name="depreciation_cost_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Vehicle overhead (ZAR/km)<small>Vehicle operating input</small><input name="vehicle_overhead_per_km" type="number" min="0" step="0.0001" /></label>
-            <label>Driver hourly wage (ZAR/hour)<small>Time-based driver input</small><input name="driver_hourly_wage" type="number" min="0" step="0.0001" /></label>
-            <label>Driver overnight allowance (ZAR)<small>Trip allowance input</small><input name="driver_overnight_allowance" type="number" min="0" step="0.01" /></label>
-            <label>Admin overhead %<small>Company overhead input</small><input name="admin_overhead_percent" type="number" min="0" step="0.0001" /></label>
-            <label>Profit margin %<small>Default commercial margin</small><input name="profit_margin_percent" type="number" min="0" step="0.0001" /></label>
-            <label>VAT %<small>Tax applied to customer quote</small><input name="vat_percent" type="number" min="0" step="0.0001" /></label>
-            <label>Minimum profit (ZAR)<small>Profit floor</small><input name="minimum_profit" type="number" min="0" step="0.01" /></label>
-            <label>Maximum discount %<small>Owner discount guardrail</small><input name="maximum_discount_percent" type="number" min="0" step="0.0001" /></label>
-            <label>Currency<input name="currency" value="ZAR" /></label>
-            <label>Quote validity days<input name="quote_validity_days" type="number" min="1" value="7" /></label>
-          </div>
-          <div class="card-heading"><h2>Dynamic pricing controls</h2><span>Season, route risk, tolls, and margin profile</span></div>
-          <div class="grid three">
-            <label>Low season multiplier<small>Seasonal adjustment</small><input name="seasonal_low_multiplier" type="number" min="0" step="0.0001" value="0.95" /></label>
-            <label>Normal season multiplier<small>Seasonal adjustment</small><input name="seasonal_normal_multiplier" type="number" min="0" step="0.0001" value="1" /></label>
-            <label>Busy season multiplier<small>Seasonal adjustment</small><input name="seasonal_busy_multiplier" type="number" min="0" step="0.0001" value="1.10" /></label>
-            <label>Peak season multiplier<small>Seasonal adjustment</small><input name="seasonal_peak_multiplier" type="number" min="0" step="0.0001" value="1.20" /></label>
-            <label>Default toll cost (ZAR)<small>Fallback when route toll data is unavailable</small><input name="default_toll_cost" type="number" min="0" step="0.01" value="0" /></label>
-            <label>Default route risk surcharge (ZAR)<small>Fallback route-risk adjustment</small><input name="default_route_risk_surcharge" type="number" min="0" step="0.01" value="0" /></label>
-            <label>Margin profile
-              <select name="margin_profile_key">
-                <option value="minimum">Minimum</option>
-                <option value="target" selected>Target</option>
-                <option value="premium">Premium</option>
-              </select>
-            </label>
-            <label>Margin profile %<input name="margin_profile_percent" type="number" min="0" step="0.0001" placeholder="20" /></label>
-            <label>Margin minimum profit<input name="margin_profile_minimum_profit" type="number" min="0" step="0.01" placeholder="1500" /></label>
-          </div>
-          <div class="card-heading"><h2>Surcharges</h2><span>Configurable rule inputs</span></div>
-          <div class="grid three">
-            <label>Escort surcharge<input name="escort_surcharge" type="number" min="0" step="0.01" /></label>
-            <label>Permit surcharge<input name="permit_surcharge" type="number" min="0" step="0.01" /></label>
-            <label>Hazmat surcharge<input name="hazmat_surcharge" type="number" min="0" step="0.01" /></label>
-            <label>Refrigeration surcharge<input name="refrigeration_surcharge" type="number" min="0" step="0.01" /></label>
-            <label>Crane surcharge<input name="crane_surcharge" type="number" min="0" step="0.01" /></label>
-            <label>Forklift surcharge<input name="forklift_surcharge" type="number" min="0" step="0.01" /></label>
-            <label>High-value threshold<input name="high_value_threshold" type="number" min="0" step="0.01" /></label>
-            <label>High-value surcharge<input name="high_value_surcharge" type="number" min="0" step="0.01" /></label>
-          </div>
+
+          <section class="pricing-admin-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Automation</p>
+                <h2>Pricing Data Sources</h2>
+                <p>Compact view of live, configured, stale, failed, review-required, and pending-rule pricing inputs.</p>
+              </div>
+            </div>
+            <div id="pricingDataSourcesList" class="readiness-grid">Loading pricing data sources...</div>
+            <details class="detail-disclosure">
+              <summary>Advanced / Legacy / Fallback Settings</summary>
+              <p class="muted">These settings are preserved for compatibility, auditability, fallback handling, or internal warning thresholds. They are not the primary commercial customer-pricing controls.</p>
+              <div class="grid three">
+                <label>Admin overhead %<input name="admin_overhead_percent" type="number" min="0" step="0.0001" /></label>
+                <label>Profit margin %<input name="profit_margin_percent" type="number" min="0" step="0.0001" /></label>
+                <label>Minimum profit<input name="minimum_profit" type="number" min="0" step="0.01" /></label>
+                <label>Margin profile<select name="margin_profile_key"><option value="minimum">Minimum</option><option value="target">Target</option><option value="premium">Premium</option></select></label>
+                <label>Margin profile %<input name="margin_profile_percent" type="number" min="0" step="0.0001" /></label>
+                <label>Margin minimum profit<input name="margin_profile_minimum_profit" type="number" min="0" step="0.01" /></label>
+                <label>Maximum discount %<input name="maximum_discount_percent" type="number" min="0" step="0.0001" /></label>
+                <label>Minimum margin warning %<input name="minimum_margin_percent" type="number" min="0" step="0.0001" /></label>
+                <label>Minimum selling price floor<input name="minimum_selling_price" type="number" min="0" step="0.01" /></label>
+                <label>Emergency fallback toll cost<input name="default_toll_cost" type="number" min="0" step="0.01" /></label>
+                <label>Toll manual review<select name="toll_manual_review_required"><option value="true">Required</option><option value="false">Not required</option></select></label>
+                <label>Currency<input name="currency" value="ZAR" /></label>
+                <label>Quote validity days<input name="quote_validity_days" type="number" min="1" value="7" /></label>
+                <label>Low season multiplier<input name="seasonal_low_multiplier" type="number" min="0" step="0.0001" /></label>
+                <label>Busy season multiplier<input name="seasonal_busy_multiplier" type="number" min="0" step="0.0001" /></label>
+                <label>Peak season multiplier<input name="seasonal_peak_multiplier" type="number" min="0" step="0.0001" /></label>
+                <label>Diesel max age days<input name="diesel_max_age_days" type="number" min="1" step="1" /></label>
+                <label>Preferred diesel grade<select name="preferred_diesel_grade"><option value="">Review required</option><option value="diesel_500ppm">Diesel 0.05% / 500 ppm</option><option value="diesel_50ppm">Diesel 0.005% / 50 ppm</option></select></label>
+                <label>Pricing basis<input name="diesel_pricing_basis" /></label>
+                <label>Time Trucking adjustment<input name="diesel_adjustment_type" /></label>
+                <label>Diesel adjustment value<input name="diesel_adjustment_value" type="number" step="0.0001" /></label>
+                <label>Diesel override price<input name="diesel_admin_override_price_per_litre" type="number" min="0" step="0.0001" /></label>
+                <label>Diesel override reason<input name="diesel_override_reason" /></label>
+                <label>Override expires<input name="diesel_manual_override_expires_at" type="datetime-local" /></label>
+                <label>Manual diesel override<select name="diesel_manual_override_enabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></label>
+              </div>
+            </details>
+          </section>
+
           <button class="primary" type="submit">Save pricing settings</button>
           <output id="pricingSettingsOutput"></output>
         </form>
