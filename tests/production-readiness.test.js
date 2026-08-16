@@ -988,6 +988,34 @@ test("route-risk override RPC uses the project internal user identity model", ()
   assert.equal(migration.includes("auth_user_id"), false, "override RPC must not reference a nonexistent auth_user_id column");
 });
 
+test("owner access correction preserves multiple owners and prevents zero active owners", () => {
+  const migration = read("supabase/migrations/20260810014500_promote_henning_owner_access.sql");
+
+  for (const expected of [
+    "ttaq_prevent_zero_active_owners",
+    "before update or delete on public.internal_users",
+    "Time Trucking must have at least one active Owner.",
+    "lower(email) = 'hluther@questlogistics.co.za'",
+    "lower(email) = 'jacquesmallan@gmail.com'",
+    "Jacques Malan must remain an active Owner",
+    "role = 'owner'",
+    "can_view_all_quotes = true",
+    "can_manage_rfqs = true",
+    "can_approve_quotes = true",
+    "can_adjust_pricing = true",
+    "can_manage_pricing_rules = true",
+    "can_manage_users = true",
+    "promote_internal_user_to_owner",
+    "old_values",
+    "new_values"
+  ]) {
+    assert.ok(migration.includes(expected), `owner correction migration should include ${expected}`);
+  }
+
+  assert.equal(migration.includes("auth.admin.inviteUserByEmail"), false, "owner correction must not recreate/invite Henning");
+  assert.equal(migration.includes("insert into public.internal_users"), false, "owner correction must update the existing internal user");
+});
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }
