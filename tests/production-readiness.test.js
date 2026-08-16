@@ -1069,6 +1069,81 @@ test("owner access correction preserves multiple owners and prevents zero active
   assert.equal(migration.includes("insert into public.internal_users"), false, "owner correction must update the existing internal user");
 });
 
+test("Time Trucking Assistant provides guided role-aware operational help", () => {
+  const helpPage = read("public/help.html");
+  const app = read("src/app.ts");
+  const pricingPage = read("public/pricing-settings.html");
+
+  for (const expected of [
+    "Time Trucking Assistant",
+    "assistantSearch",
+    "How can I help?",
+    "data-assistant-query=\"create quote\"",
+    "data-assistant-query=\"quote blocked review required\"",
+    "data-assistant-query=\"change commercial rates semi rate card\"",
+    "data-assistant-query=\"invite user create password\"",
+    "data-assistant-query=\"connect email integration\""
+  ]) {
+    assert.ok(helpPage.includes(expected), `assistant page should include ${expected}`);
+  }
+
+  for (const expected of [
+    "helpKnowledgeBase",
+    "normalizeHelpText",
+    "roleAllowsHelpTopic",
+    "helpTopicHref",
+    "assistantCategories",
+    "assistantContext",
+    "Commercial billable distance remains separate until Henning confirms day/km and return-trip rules",
+    "DAY VS KM PRICING RULE REQUIRES HENNING CONFIRMATION",
+    "Missing external charges remain review-required, not R0.",
+    "Commercial backload treatment remains review-required until Henning confirms the rule.",
+    "Open Quote Requests.",
+    "Open Pricing.",
+    "Open Users.",
+    "Open Settings.",
+    "How does an Owner invite a user?",
+    "How do I accept my invitation?",
+    "How do I create my password?",
+    "I forgot my password",
+    "My invitation expired",
+    "I did not receive my invitation",
+    "How does an Owner resend an invitation?",
+    "pricing-settings.html#commercial",
+    "pricing-settings.html#external",
+    "pricing-settings.html#internal",
+    "pricing-settings.html#overview",
+    "users-dashboard.html",
+    "admin-settings.html#integrations",
+    "quote-review.html"
+  ]) {
+    assert.ok(app.includes(expected), `assistant implementation should include ${expected}`);
+  }
+
+  for (const expected of [
+    "create a quote",
+    "quote blocked",
+    "Semi rate",
+    "Backload",
+    "cross-border",
+    "permit",
+    "internal operating-cost analysis",
+    "route-risk",
+    "diesel",
+    "toll class",
+    "HAZ",
+    "VAT"
+  ]) {
+    assert.ok((helpPage + app).toLowerCase().includes(expected.toLowerCase()), `assistant should answer searches for ${expected}`);
+  }
+
+  assert.ok(app.includes("window.location.hash.replace(\"#\", \"\")"), "Pricing Settings should support tab deep links from the assistant");
+  assert.ok(app.includes("window.history.replaceState(null, \"\", `#${tab}`)"), "Pricing tab clicks should keep the deep link current");
+  assert.ok(pricingPage.includes("data-pricing-tab-button=\"commercial\""), "commercial pricing tab should exist for assistant deep links");
+  assert.equal((helpPage + app).includes("Supabase Auth user ID"), false, "assistant must not ask users for backend auth IDs");
+  assert.equal((helpPage + app).includes("User UUID"), false, "assistant must not ask users for UUIDs");
+});
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }

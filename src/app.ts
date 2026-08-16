@@ -2348,6 +2348,10 @@ function renderShellActiveNav(): void {
   if (nav && isInternalPage() && !nav.querySelector('[data-nav="help"]')) {
     nav.insertAdjacentHTML("beforeend", `<a data-nav="help" href="./help.html">Help</a>`);
   }
+  const helpLink = nav?.querySelector<HTMLAnchorElement>('[data-nav="help"]');
+  if (helpLink && page && page !== "help") {
+    helpLink.href = `./help.html?context=${encodeURIComponent(page)}`;
+  }
   document.querySelectorAll<HTMLAnchorElement>("[data-nav]").forEach((link) => {
     link.classList.toggle("active", link.dataset.nav === page);
   });
@@ -3330,8 +3334,16 @@ function initPricingSettings(): void {
       panel.hidden = panel.dataset.pricingTab !== tab;
     });
   };
-  tabButtons.forEach((button) => button.addEventListener("click", () => activatePricingTab(button.dataset.pricingTabButton ?? "overview")));
-  activatePricingTab("overview");
+  tabButtons.forEach((button) => button.addEventListener("click", () => {
+    const tab = button.dataset.pricingTabButton ?? "overview";
+    activatePricingTab(tab);
+    if (window.location.hash.replace("#", "") !== tab) {
+      window.history.replaceState(null, "", `#${tab}`);
+    }
+  }));
+  const requestedTab = window.location.hash.replace("#", "");
+  const initialTab = tabButtons.some((button) => button.dataset.pricingTabButton === requestedTab) ? requestedTab : "overview";
+  activatePricingTab(initialTab);
   const equipmentProfilesList = document.querySelector<HTMLElement>("#equipmentProfilesList");
   const pricingReadinessList = document.querySelector<HTMLElement>("#pricingReadinessList");
   const commercialRateCardList = document.querySelector<HTMLElement>("#commercialRateCardList");
@@ -5340,83 +5352,1013 @@ async function initCustomerPortal(): Promise<void> {
   }
 }
 
+type HelpPermission =
+  | "view_all_quotes"
+  | "manage_rfqs"
+  | "approve_quotes"
+  | "adjust_pricing"
+  | "manage_pricing_rules"
+  | "manage_users"
+  | "company_settings"
+  | "integrations";
+
+interface HelpTopic {
+  id: string;
+  category: string;
+  title: string;
+  summary: string;
+  aliases: string[];
+  keywords: string[];
+  steps: string[];
+  page?: string;
+  tab?: string;
+  permission?: HelpPermission;
+  roleNote?: string;
+  warnings?: string[];
+  blockerCodes?: string[];
+  contexts?: string[];
+  related?: string[];
+}
+
+function normalizeHelpText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function helpTopicHref(topic: HelpTopic): string {
+  if (!topic.page) return "";
+  return `${topic.page}${topic.tab ? `#${topic.tab}` : ""}`;
+}
+
+function roleAllowsHelpTopic(topic: HelpTopic): boolean {
+  if (!topic.permission || !currentInternalUser) return true;
+  if (currentInternalUser.role === "owner") return true;
+  return {
+    view_all_quotes: currentInternalUser.can_view_all_quotes,
+    manage_rfqs: currentInternalUser.can_manage_rfqs,
+    approve_quotes: currentInternalUser.can_approve_quotes,
+    adjust_pricing: currentInternalUser.can_adjust_pricing,
+    manage_pricing_rules: currentInternalUser.can_manage_pricing_rules,
+    manage_users: currentInternalUser.can_manage_users,
+    company_settings: currentInternalUser.role === "manager" || currentInternalUser.can_manage_rfqs || currentInternalUser.can_manage_users,
+    integrations: currentInternalUser.role === "manager" || currentInternalUser.can_manage_users
+  }[topic.permission];
+}
+
+const helpKnowledgeBase: HelpTopic[] = [
+  {
+    id: "create-rfq-link",
+    category: "Quotes",
+    title: "How do I create a quote request?",
+    summary: "Create a secure RFQ link, send it to the customer, and review the submitted quote internally before anything is issued.",
+    aliases: ["create quote", "new quote", "quote link", "customer RFQ", "RFQ request"],
+    keywords: ["quote", "rfq", "request", "customer", "link", "send"],
+    steps: [
+      "Open Quote Requests.",
+      "Use Create RFQ Link to generate the secure customer form.",
+      "Send the link through the approved email workflow when email is configured, or share the secure link manually if instructed by an Owner.",
+      "After the customer submits the RFQ, open Quotes to review routing, pricing, warnings, and documents before sending any customer quote."
+    ],
+    page: "create-rfq-link.html",
+    permission: "manage_rfqs",
+    contexts: ["create", "dashboard"],
+    related: ["review-quote", "customer-quote-safety"]
+  },
+  {
+    id: "review-quote",
+    category: "Quotes",
+    title: "How do I review and approve a quote?",
+    summary: "Quote Review is the internal control point for calculated price, route, tolls, route risk, warnings, overrides, VAT, and customer document status.",
+    aliases: ["approve quote", "quote review", "manager approval", "send quote"],
+    keywords: ["approve", "review", "quote", "calculation", "document", "send"],
+    steps: [
+      "Open Quotes and select the submitted RFQ.",
+      "Check the route estimate, equipment selection, operational journey, pricing summary, and Calculation Breakdown / Pricing Audit.",
+      "Resolve review warnings before sending. Do not send a quote if required manual external costs are missing.",
+      "Owners or authorized managers may approve and send; viewers can inspect only when their access allows it."
+    ],
+    page: "quote-review.html",
+    permission: "approve_quotes",
+    contexts: ["review"],
+    related: ["why-review-required", "customer-quote-safety", "pricing-audit"]
+  },
+  {
+    id: "find-old-quote",
+    category: "Quotes",
+    title: "How do I find an old quote?",
+    summary: "Use Quotes to search or filter quote history by customer, route, vehicle, date, reference, and status where available.",
+    aliases: ["old quote", "quote history", "find quote", "quote number", "sent quote"],
+    keywords: ["old", "history", "quote", "reference", "customer", "route", "status"],
+    steps: [
+      "Open Quotes.",
+      "Use the available search, status, customer, route, vehicle, date, or reference fields.",
+      "Open the matching quote to inspect its stored snapshot, customer document, VAT, status, and audit information.",
+      "Do not regenerate historical quote documents just to inspect them."
+    ],
+    page: "quote-review.html",
+    permission: "view_all_quotes",
+    contexts: ["review", "dashboard"],
+    related: ["quote-statuses", "customer-quote-safety"]
+  },
+  {
+    id: "quote-statuses",
+    category: "Quotes",
+    title: "What do quote statuses mean?",
+    summary: "Quote statuses show where the RFQ or customer quote is in the internal workflow.",
+    aliases: ["status", "draft", "review required", "sent", "accepted", "expired", "ready"],
+    keywords: ["status", "draft", "submitted", "review", "approved", "sent", "accepted", "expired"],
+    steps: [
+      "Draft means the quote is not ready to issue.",
+      "RFQ submitted or Client submitted means the customer request has arrived.",
+      "Admin review or Adjusted means internal pricing or route review is still happening.",
+      "Approved and Sent to client mean the quote has passed internal controls. Accepted, Declined, Expired, and Accepted Load show the customer or operational outcome."
+    ],
+    page: "quote-review.html",
+    permission: "view_all_quotes",
+    related: ["find-old-quote", "review-quote"]
+  },
+  {
+    id: "manual-overrides",
+    category: "Quotes",
+    title: "When should I use a manual override?",
+    summary: "Authorized overrides are for documented commercial judgment, source corrections, or approved manual costs. They are audited and must not bypass safety blockers without evidence.",
+    aliases: ["override", "manual price", "change price", "manager adjustment", "manual toll"],
+    keywords: ["override", "manual", "price", "reason", "audit", "manager"],
+    steps: [
+      "Open the quote in Quote Review.",
+      "Review the system recommendation and warning list first.",
+      "Use an override only when you have approved evidence or manager authority.",
+      "Record a clear reason. The original value, new value, user, timestamp, and reason remain auditable."
+    ],
+    page: "quote-review.html",
+    permission: "adjust_pricing",
+    contexts: ["review"],
+    related: ["why-review-required", "pricing-audit"]
+  },
+  {
+    id: "why-review-required",
+    category: "Troubleshooting",
+    title: "Why is this quote blocked or review-required?",
+    summary: "The engine blocks automatic quoting when it cannot prove a commercial rule, source, route, or external cost is safe.",
+    aliases: ["quote blocked", "review required", "manual review", "automation warning", "cannot send"],
+    keywords: ["blocked", "review", "warning", "automation", "status", "manual"],
+    steps: [
+      "Open the quote in Quote Review.",
+      "Read the automation review warnings and the Warnings / Pending Rules section inside Calculation Breakdown / Pricing Audit.",
+      "Check whether the blocker is a missing route, unresolved day-vs-km rule, return-load rule, toll class, route-risk geometry, cross-border permit, or manual external charge.",
+      "Resolve the exact missing input or ask an Owner to confirm the commercial rule. Do not clear a warning by assuming R0."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    blockerCodes: [
+      "DAY VS KM PRICING RULE REQUIRES HENNING CONFIRMATION",
+      "Commercial billable distance remains separate until Henning confirms day/km and return-trip rules",
+      "Missing costs remain review-required, not R0"
+    ],
+    contexts: ["review", "pricing"],
+    related: ["day-vs-km", "return-loads", "tolls", "cross-border-permits"]
+  },
+  {
+    id: "customer-quote-safety",
+    category: "Quotes",
+    title: "Customer quote safety",
+    summary: "Customers see the selling price, VAT, validity, service terms, and quote document. Internal cost, margin, source snapshots, and warnings stay internal.",
+    aliases: ["customer view", "customer quote", "hide profit", "internal leakage"],
+    keywords: ["customer", "public", "profit", "margin", "internal", "document"],
+    steps: [
+      "Use the public customer quote pages only for the final customer-facing price and documents.",
+      "Keep Calculation Breakdown / Pricing Audit, internal cost, profitability, source metadata, and manager warnings inside Quote Review.",
+      "Never send screenshots of internal pricing audit panels to a customer."
+    ],
+    page: "quote-review.html",
+    permission: "view_all_quotes",
+    related: ["pricing-audit", "review-quote"]
+  },
+  {
+    id: "pricing-audit",
+    category: "Pricing",
+    title: "Where do I see the full calculation breakdown?",
+    summary: "Quote Review shows the internal calculation order from commercial base through external charges, tolls, route risk, VAT, and final recommendation.",
+    aliases: ["calculation breakdown", "pricing audit", "source details", "formula"],
+    keywords: ["calculation", "audit", "formula", "source", "margin", "vat"],
+    steps: [
+      "Open the quote in Quote Review.",
+      "Find Calculation Breakdown / Pricing Audit.",
+      "Use Actual calculation order for line-by-line formulas and Technical Source Details for database/source evidence.",
+      "Use this internally only; it is not customer-facing."
+    ],
+    page: "quote-review.html",
+    permission: "view_all_quotes",
+    contexts: ["review"],
+    related: ["customer-quote-safety", "internal-costing"]
+  },
+  {
+    id: "change-commercial-rates",
+    category: "Pricing",
+    title: "Where do I change Time Trucking commercial rates?",
+    summary: "The Semi, S/L, and other commercial selling rates are managed in Pricing Settings under the commercial rate-card tab.",
+    aliases: ["change Semi rate", "rate card", "R/km", "R/day", "commercial pricing", "selling rates"],
+    keywords: ["semi", "superlink", "rate", "commercial", "r km", "r day", "price"],
+    steps: [
+      "Open Pricing.",
+      "Choose the Commercial Pricing tab.",
+      "Edit only approved Time Trucking rate-card values.",
+      "Save pricing settings and review readiness warnings before relying on automatic quoting."
+    ],
+    page: "pricing-settings.html",
+    tab: "commercial",
+    permission: "manage_pricing_rules",
+    contexts: ["pricing"],
+    related: ["day-vs-km", "haz-behaviour", "pricing-readiness"]
+  },
+  {
+    id: "day-vs-km",
+    category: "Pricing",
+    title: "Why does day-vs-km still need review?",
+    summary: "The system stores both R/day and R/km commercial bases, but the exact rule for choosing between them remains pending Henning confirmation.",
+    aliases: ["R/day", "R/km", "day rate", "kilometre rate", "which rate", "commercial basis"],
+    keywords: ["day", "km", "basis", "commercial", "pending", "Henning"],
+    steps: [
+      "Open Pricing and review Commercial Pricing Rules.",
+      "For a quote, open Calculation Breakdown / Pricing Audit to see both commercial scenarios.",
+      "If the quote is blocked for this reason, an Owner must confirm the rule before production automation can treat it as automatic.",
+      "Do not invent a distance or duration threshold."
+    ],
+    page: "pricing-settings.html",
+    tab: "commercial",
+    permission: "manage_pricing_rules",
+    warnings: ["This is intentionally review-required until Henning approves the exact Time Trucking rule."],
+    related: ["change-commercial-rates", "why-review-required"]
+  },
+  {
+    id: "diesel-reference",
+    category: "Pricing",
+    title: "How does diesel pricing work?",
+    summary: "Official DMPR diesel data provides the reference diesel value; manual overrides remain controlled and cannot replace validated official data with zero or blank values.",
+    aliases: ["diesel", "fuel price", "DMPR", "0.005 sulphur", "50 ppm", "manual override"],
+    keywords: ["diesel", "fuel", "dmpr", "sulphur", "official", "provider"],
+    steps: [
+      "Open Pricing and choose External Charges or Overview.",
+      "Check Current effective diesel, Official reference, provider health, and adjustment status.",
+      "Authorized administrators can run Check for latest official diesel price.",
+      "If the provider is unhealthy, keep the last trusted diesel value and review affected quotes."
+    ],
+    page: "pricing-settings.html",
+    tab: "external",
+    permission: "manage_pricing_rules",
+    contexts: ["pricing"],
+    related: ["pricing-readiness", "why-review-required"]
+  },
+  {
+    id: "pricing-readiness",
+    category: "Pricing",
+    title: "What does Automatic Quoting Readiness mean?",
+    summary: "Readiness lists which pricing inputs are automatic, configured, review-required, or missing before the system can quote safely.",
+    aliases: ["readiness", "automatic quoting", "production ready", "pricing status"],
+    keywords: ["readiness", "automatic", "pricing", "status", "configured"],
+    steps: [
+      "Open Pricing.",
+      "Start on Overview and read Automatic Quoting Readiness.",
+      "Fix only the items that have approved Time Trucking rules or official sources.",
+      "Leave unapproved commercial assumptions as review-required."
+    ],
+    page: "pricing-settings.html",
+    tab: "overview",
+    permission: "manage_pricing_rules",
+    contexts: ["pricing"],
+    related: ["change-commercial-rates", "diesel-reference", "tolls"]
+  },
+  {
+    id: "additional-stops",
+    category: "Pricing",
+    title: "How are additional stops priced?",
+    summary: "Additional stops use the approved Time Trucking additional-stop commercial charge when the RFQ includes extra stops.",
+    aliases: ["extra stop", "additional stop", "multi stop", "R1500"],
+    keywords: ["stop", "additional", "extra", "charge"],
+    steps: [
+      "Review the submitted pickup, delivery, and intermediate stops in Quote Review.",
+      "The engine counts extra stops and applies the configured commercial additional-stop rate.",
+      "If the stop data is incomplete, correct the RFQ or require manager review before issuing."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    contexts: ["review"],
+    related: ["pricing-audit", "change-commercial-rates"]
+  },
+  {
+    id: "night-out",
+    category: "Pricing",
+    title: "How is night-out handled?",
+    summary: "The approved Time Trucking night-out allowance is visible in the calculation, but overnight triggers must remain auditable in Quote Review.",
+    aliases: ["night out", "overnight", "driver allowance", "R1750"],
+    keywords: ["night", "overnight", "driver", "allowance"],
+    steps: [
+      "Open the quote in Quote Review.",
+      "Check duration, operational journey, and the Night out allowance line in Calculation Breakdown / Pricing Audit.",
+      "If the stored trigger conflicts with Time Trucking operating practice, hold the quote for review instead of issuing automatically."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    related: ["pricing-audit", "why-review-required"]
+  },
+  {
+    id: "haz-behaviour",
+    category: "Pricing",
+    title: "How does HAZ pricing work?",
+    summary: "Hazardous cargo selects the approved HAZ commercial rate category. It must not stack a generic hazmat surcharge unless an approved external cost exists.",
+    aliases: ["HAZ", "hazmat", "dangerous goods", "hazardous cargo"],
+    keywords: ["haz", "hazmat", "dangerous", "goods", "surcharge"],
+    steps: [
+      "Confirm the RFQ cargo category is correct.",
+      "Open Calculation Breakdown / Pricing Audit and check that the HAZ commercial rate was selected when applicable.",
+      "Only add an external HAZ cost when there is a real approved third-party or operational charge."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    related: ["change-commercial-rates", "customer-quote-safety"]
+  },
+  {
+    id: "internal-costing",
+    category: "Internal Costing",
+    title: "What is internal operating-cost analysis?",
+    summary: "Fuel, tyres, maintenance, insurance, depreciation, driver cost, overhead, and contribution are internal profitability analysis, not the customer selling-price base.",
+    aliases: ["internal costs", "operating cost", "profitability", "contribution", "fuel tyres maintenance"],
+    keywords: ["cost", "internal", "fuel", "tyres", "maintenance", "insurance", "depreciation", "driver", "overhead", "profit"],
+    steps: [
+      "Open Pricing and choose Internal Costing to configure vehicle-class cost profiles.",
+      "Open Quote Review and inspect Internal Estimated Operating Cost and Profitability Analysis.",
+      "Treat blank cost values as not configured, not R0.",
+      "Do not add internal cost totals on top of Henning's commercial selling rate."
+    ],
+    page: "pricing-settings.html",
+    tab: "internal",
+    permission: "manage_pricing_rules",
+    contexts: ["pricing", "review"],
+    related: ["pricing-audit", "change-commercial-rates"]
+  },
+  {
+    id: "vehicle-cost-profiles",
+    category: "Internal Costing",
+    title: "Where do I configure vehicle-class cost profiles?",
+    summary: "Vehicle-class cost assumptions are managed separately from customer selling rates for internal profitability checks.",
+    aliases: ["vehicle cost profile", "1 ton cost", "semi cost", "fuel consumption", "driver cost"],
+    keywords: ["vehicle", "class", "profile", "fuel", "driver", "internal"],
+    steps: [
+      "Open Pricing.",
+      "Choose the Internal Costing tab.",
+      "Update only Time Trucking-approved internal assumptions.",
+      "Save and re-open Quote Review to verify contribution analysis."
+    ],
+    page: "pricing-settings.html",
+    tab: "internal",
+    permission: "manage_pricing_rules",
+    related: ["internal-costing"]
+  },
+  {
+    id: "tolls",
+    category: "Routes & Tolls",
+    title: "How are tolls calculated?",
+    summary: "Automatic tolls use approved South African toll data when route geometry, toll class, and matching evidence are reliable; otherwise the quote requires review.",
+    aliases: ["toll", "toll class", "SANRAL", "Bakwena", "N3TC", "toll fallback"],
+    keywords: ["toll", "class", "route", "source", "fallback", "manual"],
+    steps: [
+      "Open the quote in Quote Review.",
+      "Check the toll class, route evidence, toll source, and fallback status in the pricing audit.",
+      "If the route or toll class cannot be matched reliably, hold the quote for review.",
+      "Manual toll overrides must remain separately snapshotted and auditable."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    contexts: ["review", "pricing"],
+    related: ["route-estimate", "route-risk"]
+  },
+  {
+    id: "route-estimate",
+    category: "Routes & Tolls",
+    title: "What if the route estimate failed?",
+    summary: "A missing or unreliable route prevents safe automatic distance, duration, toll, route-risk, and cross-border decisions.",
+    aliases: ["route failed", "distance missing", "Google route", "manual route"],
+    keywords: ["route", "distance", "duration", "google", "manual", "failed"],
+    steps: [
+      "Open Quote Review.",
+      "Use the route controls to refresh or enter an authorized manual route estimate.",
+      "Review the depot to pickup to delivery to depot journey.",
+      "Do not assume zero toll or zero risk when route geometry is unknown."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    blockerCodes: ["Unknown route geometry correctly requires review rather than assuming zero risk."],
+    related: ["tolls", "route-risk", "operational-journey"]
+  },
+  {
+    id: "operational-journey",
+    category: "Routes & Tolls",
+    title: "What is the depot and three-leg journey?",
+    summary: "Operational review models depot to pickup, pickup to delivery, and delivery back to depot separately from customer-facing route wording.",
+    aliases: ["three leg", "depot route", "return to depot", "operational journey"],
+    keywords: ["depot", "pickup", "delivery", "return", "journey"],
+    steps: [
+      "Open Quote Review.",
+      "Find the Operational Journey card.",
+      "Check depot to pickup, pickup to delivery, and delivery to depot.",
+      "Use the return-load control to record whether a backload exists, but do not apply an unapproved commercial discount."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    contexts: ["review"],
+    related: ["return-loads", "admin-depot"]
+  },
+  {
+    id: "return-loads",
+    category: "Return Loads",
+    title: "How do return loads and backloads work?",
+    summary: "Return-load availability is recorded for operations, but no discount, uplift, or pricing rule is applied until Henning approves it.",
+    aliases: ["backload", "return load", "return trip", "empty return", "back haul"],
+    keywords: ["return", "backload", "back haul", "discount", "depot"],
+    steps: [
+      "Open Quote Review.",
+      "Use the return-load control to record None, Available, or Unknown review required.",
+      "If commercial pricing depends on a backload, hold the quote for manager review.",
+      "Do not apply an informal discount outside an approved Time Trucking rule."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    warnings: ["Commercial backload treatment remains review-required until Henning confirms the rule."],
+    related: ["operational-journey", "why-review-required"]
+  },
+  {
+    id: "route-risk",
+    category: "Routes & Tolls",
+    title: "How does route-risk pricing work?",
+    summary: "Route-risk policy is separate from tolls and cross-border charges. Unknown geometry requires review instead of assuming no risk.",
+    aliases: ["route risk", "high risk", "risk surcharge", "risk override"],
+    keywords: ["risk", "route", "high", "policy", "override"],
+    steps: [
+      "Open Quote Review and inspect route-risk metadata in the pricing audit.",
+      "Confirm any surcharge comes from an approved Time Trucking risk policy.",
+      "If the route cannot be matched to approved policy evidence, keep the quote review-required."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    related: ["tolls", "why-review-required"]
+  },
+  {
+    id: "cross-border-permits",
+    category: "Cross-Border & Permits",
+    title: "How are cross-border and permit costs handled?",
+    summary: "Cross-border detection and permit foundations exist, but missing external charges remain review-required until approved costs and sources are configured.",
+    aliases: ["cross border", "border", "permit", "customs", "international"],
+    keywords: ["cross", "border", "permit", "external", "manual", "review"],
+    steps: [
+      "Open Quote Review and check whether the route crosses a border.",
+      "Review cross-border surcharge, permit source, and manual external cost warnings.",
+      "If a required permit or third-party charge is not configured, add a reviewed manual external cost or hold the quote.",
+      "Do not send customer pricing while required permit costs are unknown."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    contexts: ["review", "pricing"],
+    related: ["external-charges", "why-review-required"]
+  },
+  {
+    id: "external-charges",
+    category: "Cross-Border & Permits",
+    title: "External charges",
+    summary: "Crane, refrigeration, third-party handling, high-value insurance, permits, and special site costs remain manual or review-required unless an approved automatic source exists.",
+    aliases: ["crane cost", "refrigeration", "forklift", "insurance", "permit fee", "manual charge"],
+    keywords: ["crane", "refrigeration", "forklift", "insurance", "permit", "manual", "external"],
+    steps: [
+      "Open Quote Review.",
+      "Read the external charges and warnings.",
+      "Enter only documented external costs that a manager approves.",
+      "If the cost is required but unknown, keep the quote review-required."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    warnings: ["Missing external charges remain review-required, not R0."],
+    related: ["cross-border-permits", "why-review-required"]
+  },
+  {
+    id: "crane-cost",
+    category: "Cross-Border & Permits",
+    title: "How do I enter a crane cost?",
+    summary: "There is no universal Time Trucking crane price. If a quote requires a crane, an authorized user must enter the actual job-specific cost.",
+    aliases: ["crane", "crane required", "lifting cost", "manual crane cost"],
+    keywords: ["crane", "lifting", "manual", "cost", "external"],
+    steps: [
+      "Open the quote in Quote Review.",
+      "Find external/manual charge controls or the crane warning for the quote.",
+      "Enter the actual documented crane cost only after manager approval.",
+      "If the crane cost is unknown, keep the quote review-required."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    warnings: ["Manual crane cost required means the quote must not assume R0."],
+    related: ["external-charges", "why-review-required"]
+  },
+  {
+    id: "refrigeration-cost",
+    category: "Cross-Border & Permits",
+    title: "How is refrigeration handled?",
+    summary: "Refrigeration is equipment and job specific. The system must not invent a universal refrigeration surcharge.",
+    aliases: ["refrigeration", "reefer", "temperature", "cold chain"],
+    keywords: ["refrigeration", "reefer", "temperature", "monitoring", "manual"],
+    steps: [
+      "Open Quote Review and confirm the refrigeration requirement.",
+      "Check whether reefer equipment, temperature range, and monitoring requirements are complete.",
+      "Enter only approved manual refrigeration or third-party costs where required.",
+      "Hold the quote for review if the cost or equipment requirement is unclear."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    related: ["external-charges", "why-review-required"]
+  },
+  {
+    id: "forklift-cost",
+    category: "Cross-Border & Permits",
+    title: "How is forklift handling charged?",
+    summary: "Time Trucking does not automatically charge a forklift. Supplier or receiver handling is normally outside the transport price unless Time Trucking arranges a third party.",
+    aliases: ["forklift", "loading", "offloading", "third-party handling"],
+    keywords: ["forklift", "loading", "offloading", "handling", "third"],
+    steps: [
+      "Confirm who is responsible for loading and offloading.",
+      "If Time Trucking is not arranging a forklift, do not add a forklift charge.",
+      "If Time Trucking arranges a third-party forklift exceptionally, enter the documented manual handling cost in Quote Review.",
+      "Keep the quote review-required if responsibility or cost is unclear."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    related: ["external-charges"]
+  },
+  {
+    id: "high-value-insurance",
+    category: "Cross-Border & Permits",
+    title: "Why is high-value insurance review required?",
+    summary: "Declared cargo value may require additional insurance, but the system must not guess an insurer percentage or premium.",
+    aliases: ["high value", "declared value", "insurance", "cargo insurance", "goods in transit"],
+    keywords: ["high", "value", "insurance", "cargo", "declared", "premium"],
+    steps: [
+      "Open Quote Review.",
+      "Check the declared cargo value and insurance warning.",
+      "If an approved insurer rule or quote exists, enter the documented manual insurer cost.",
+      "If no approved insurer rule exists, keep Insurance Review Required."
+    ],
+    page: "quote-review.html",
+    permission: "manage_rfqs",
+    warnings: ["The system must not guess an insurance percentage."],
+    related: ["external-charges", "why-review-required"]
+  },
+  {
+    id: "customers",
+    category: "Customers",
+    title: "Where do I manage customers?",
+    summary: "The Customers page is the internal customer workspace for records linked to quote activity.",
+    aliases: ["customer list", "customer record", "client record", "account"],
+    keywords: ["customer", "client", "record", "account"],
+    steps: [
+      "Open Customers.",
+      "Search or review the customer record linked to the quote.",
+      "Keep customer-facing communication separate from internal quote audit notes."
+    ],
+    page: "customers.html",
+    permission: "view_all_quotes",
+    contexts: ["customers"],
+    related: ["create-rfq-link", "review-quote"]
+  },
+  {
+    id: "invite-user",
+    category: "Users & Access",
+    title: "How does an Owner invite a user?",
+    summary: "Owners invite users from Users & Access. The backend creates or links the login and the invited user creates their own password.",
+    aliases: ["invite user", "add worker", "new employee", "send invitation", "Users & Access"],
+    keywords: ["invite", "user", "owner", "access", "email"],
+    steps: [
+      "Open Users.",
+      "Enter full name, email, phone if applicable, role, and permissions.",
+      "Choose Send invitation.",
+      "The user receives a Time Trucking setup link and creates their own password. Owners never choose or see the password."
+    ],
+    page: "users-dashboard.html",
+    permission: "manage_users",
+    contexts: ["users"],
+    related: ["accept-invitation", "roles-permissions", "resend-invitation"]
+  },
+  {
+    id: "accept-invitation",
+    category: "Users & Access",
+    title: "How do I accept my invitation?",
+    summary: "Open the Time Trucking invitation email, accept the invitation, and create your own password on the Time Trucking page.",
+    aliases: ["accept invite", "invitation email", "first login", "new account"],
+    keywords: ["accept", "invitation", "email", "password"],
+    steps: [
+      "Open the Time Trucking invitation email.",
+      "Choose Accept invitation.",
+      "When the Time Trucking password page opens, create and confirm your password.",
+      "After setup, log in with your email and password."
+    ],
+    page: "login.html",
+    related: ["create-password", "login-help"]
+  },
+  {
+    id: "create-password",
+    category: "Users & Access",
+    title: "How do I create my password?",
+    summary: "Use the Create your password page from your invitation or reset email. Passwords are managed securely by the login provider, not stored by Time Trucking tables.",
+    aliases: ["create password", "set password", "confirm password", "password setup"],
+    keywords: ["password", "setup", "create", "confirm", "strength"],
+    steps: [
+      "Open the link from the invitation or reset email.",
+      "Enter a strong new password and confirm it.",
+      "If the link is expired or already used, ask an Owner to send a new setup link or use Forgot password.",
+      "Never ask an Owner or developer to set your password for you."
+    ],
+    page: "password.html",
+    related: ["forgot-password", "invitation-expired"]
+  },
+  {
+    id: "login-help",
+    category: "Users & Access",
+    title: "How do I log in?",
+    summary: "Use the internal login page with your email and password. A valid login also needs an active Time Trucking internal access record.",
+    aliases: ["login", "sign in", "portal login", "manager portal"],
+    keywords: ["login", "sign", "portal", "access"],
+    steps: [
+      "Open the Time Trucking login page.",
+      "Enter your email and password.",
+      "If access is revoked or not active, the portal will block internal pages even if the password is correct.",
+      "Ask an Owner to check Users & Access if your role or permissions look wrong."
+    ],
+    page: "login.html",
+    related: ["roles-permissions", "forgot-password"]
+  },
+  {
+    id: "forgot-password",
+    category: "Users & Access",
+    title: "I forgot my password",
+    summary: "Use Forgot password on the login page. The reset link opens the Time Trucking password page.",
+    aliases: ["reset password", "forgot password", "cannot login", "password reset"],
+    keywords: ["forgot", "password", "reset", "email"],
+    steps: [
+      "Open Login.",
+      "Choose Forgot password.",
+      "Enter your email address.",
+      "Open the reset email and create a new password on the Time Trucking page."
+    ],
+    page: "login.html",
+    related: ["create-password", "login-help"]
+  },
+  {
+    id: "invitation-expired",
+    category: "Users & Access",
+    title: "My invitation expired",
+    summary: "Expired or already-used links should show a friendly message. An Owner can resend a secure setup link without recreating the account.",
+    aliases: ["expired invite", "invalid invitation", "link expired", "already used"],
+    keywords: ["expired", "invitation", "invalid", "setup", "resend"],
+    steps: [
+      "Do not use a backend dashboard or account UUID.",
+      "Ask an Owner to open Users & Access.",
+      "The Owner finds your user and chooses Send setup link.",
+      "Use the new email link to create your password."
+    ],
+    page: "users-dashboard.html",
+    permission: "manage_users",
+    related: ["resend-invitation", "create-password"]
+  },
+  {
+    id: "invitation-not-received",
+    category: "Users & Access",
+    title: "I did not receive my invitation",
+    summary: "Check spam first. If it is missing, an Owner can resend the setup link from Users & Access.",
+    aliases: ["no invite email", "missing invitation", "email not received", "setup link"],
+    keywords: ["invitation", "missing", "email", "spam", "resend"],
+    steps: [
+      "Check spam or junk mail.",
+      "Confirm the Owner used the correct email address.",
+      "Ask the Owner to resend a setup link from Users & Access.",
+      "If emails still fail, check the email integration status in Settings."
+    ],
+    page: "users-dashboard.html",
+    permission: "manage_users",
+    related: ["resend-invitation", "email-setup"]
+  },
+  {
+    id: "resend-invitation",
+    category: "Users & Access",
+    title: "How does an Owner resend an invitation?",
+    summary: "Owners can resend a setup link for an existing linked user without recreating their login account.",
+    aliases: ["send setup link", "resend invite", "resend invitation", "reinvite"],
+    keywords: ["resend", "setup", "link", "owner", "invite"],
+    steps: [
+      "Open Users.",
+      "Find the existing user.",
+      "Choose Send setup link.",
+      "The user receives a secure email and creates their own password."
+    ],
+    page: "users-dashboard.html",
+    permission: "manage_users",
+    contexts: ["users"],
+    related: ["invite-user", "invitation-expired"]
+  },
+  {
+    id: "roles-permissions",
+    category: "Users & Access",
+    title: "What can each role do?",
+    summary: "Owner has full access. Manager and staff permissions are controlled by server-backed role fields. Viewer is read-only.",
+    aliases: ["owner", "manager", "staff", "viewer", "permissions", "role"],
+    keywords: ["role", "permission", "owner", "manager", "staff", "viewer"],
+    steps: [
+      "Open Users to review each internal user.",
+      "Owner means full access, user management, approvals, pricing, settings, integrations, and internal audit.",
+      "Owner-protection rules prevent accidentally leaving Time Trucking with zero active Owners.",
+      "Changing a role must be done through authorized server/database controls, not only the UI."
+    ],
+    page: "users-dashboard.html",
+    permission: "manage_users",
+    related: ["invite-user"]
+  },
+  {
+    id: "email-setup",
+    category: "Email & Integrations",
+    title: "How do I connect email?",
+    summary: "Email integration belongs in Settings. If custom SMTP or branded email is not configured, the assistant should say so rather than pretending it is complete.",
+    aliases: ["connect email", "SMTP", "email sending", "branded invitation", "integration"],
+    keywords: ["email", "smtp", "integration", "invitation", "quote email"],
+    steps: [
+      "Open Settings.",
+      "Review the Integrations section.",
+      "Confirm the sender, templates, and secure server-side email provider are configured.",
+      "If email is not configured, use only approved manual fallback communication until an Owner connects the provider."
+    ],
+    page: "admin-settings.html",
+    tab: "integrations",
+    permission: "integrations",
+    contexts: ["admin-settings"],
+    related: ["invitation-not-received", "create-rfq-link"]
+  },
+  {
+    id: "email-not-sending",
+    category: "Email & Integrations",
+    title: "Why is email not sending?",
+    summary: "Email delivery depends on approved server-side provider configuration, sender verification, templates, and allowed origins.",
+    aliases: ["email failed", "test email", "reconnect email", "quote email not sent", "invitation email failed"],
+    keywords: ["email", "failed", "send", "sender", "provider", "integration", "template"],
+    steps: [
+      "Open Settings and review Integrations.",
+      "Confirm sender details, provider status, and template configuration.",
+      "Ask an Owner or platform administrator to verify provider secrets only in secure hosting settings.",
+      "Do not paste provider API keys into the browser or Help page."
+    ],
+    page: "admin-settings.html",
+    tab: "integrations",
+    permission: "integrations",
+    related: ["email-setup", "invitation-not-received"]
+  },
+  {
+    id: "company-settings",
+    category: "Company Settings",
+    title: "Where do I update company settings?",
+    summary: "Settings stores Time Trucking identity, quote contact details, VAT-related company fields, and operational defaults.",
+    aliases: ["company settings", "admin settings", "VAT number", "company details"],
+    keywords: ["company", "settings", "vat", "contact", "admin"],
+    steps: [
+      "Open Settings.",
+      "Update company identity and quote contact fields only with approved values.",
+      "Use Pricing for pricing rules and Users for access control.",
+      "Save and confirm the displayed settings match Time Trucking's current records."
+    ],
+    page: "admin-settings.html",
+    permission: "company_settings",
+    contexts: ["admin-settings"],
+    related: ["admin-depot", "email-setup"]
+  },
+  {
+    id: "admin-depot",
+    category: "Company Settings",
+    title: "Where do I set the default operating depot?",
+    summary: "The default depot feeds operational journey review for depot to pickup, delivery, and return-to-depot checks.",
+    aliases: ["depot", "operating depot", "yard", "base"],
+    keywords: ["depot", "settings", "route", "journey"],
+    steps: [
+      "Open Settings.",
+      "Find Default operating depot.",
+      "Save only the approved Time Trucking depot.",
+      "Return to Quote Review and refresh operational journey checks if needed."
+    ],
+    page: "admin-settings.html",
+    permission: "company_settings",
+    related: ["operational-journey"]
+  },
+  {
+    id: "vat",
+    category: "Pricing",
+    title: "Where is VAT handled?",
+    summary: "VAT is a source-backed pricing setting and appears in Quote Review and customer quote totals.",
+    aliases: ["VAT", "tax", "SARS", "vat rate"],
+    keywords: ["vat", "tax", "sars", "rate"],
+    steps: [
+      "Open Pricing to review the configured VAT rate and source.",
+      "Open Quote Review to see the VAT amount on the calculated customer price.",
+      "Change VAT only when an Owner has verified the official rate and source."
+    ],
+    page: "pricing-settings.html",
+    tab: "advanced",
+    permission: "manage_pricing_rules",
+    related: ["pricing-audit", "company-settings"]
+  },
+  {
+    id: "cannot-change-pricing",
+    category: "Troubleshooting",
+    title: "Why can I not change pricing settings?",
+    summary: "Pricing changes require Owner or pricing-rule permission. This is enforced by the server/database, not only by disabled buttons.",
+    aliases: ["pricing disabled", "cannot save pricing", "permission denied pricing"],
+    keywords: ["pricing", "permission", "denied", "disabled", "save"],
+    steps: [
+      "Check your role in the sign-in panel or Users dashboard.",
+      "Ask an Owner to grant pricing permissions if your job requires them.",
+      "Do not ask for direct database access or a developer-only workaround."
+    ],
+    page: "users-dashboard.html",
+    permission: "manage_users",
+    related: ["roles-permissions", "change-commercial-rates"]
+  },
+  {
+    id: "what-still-needs-henning",
+    category: "Troubleshooting",
+    title: "What still needs Henning approval?",
+    summary: "Commercial assumptions that are not approved stay review-required: day-vs-km rule, return-load treatment, unapproved route-risk areas, and automatic external-charge formulas.",
+    aliases: ["Henning approval", "pending rules", "not automatic", "manual review"],
+    keywords: ["Henning", "approval", "pending", "manual", "review", "automatic"],
+    steps: [
+      "Open Pricing and read Automatic Quoting Readiness.",
+      "Open Quote Review warnings for quote-specific blockers.",
+      "Only automate rules that Henning has confirmed or that come from reliable official/approved sources.",
+      "Leave unknown commercial logic review-required."
+    ],
+    page: "pricing-settings.html",
+    tab: "overview",
+    permission: "manage_pricing_rules",
+    related: ["day-vs-km", "return-loads", "external-charges"]
+  }
+];
+
+const assistantDeepLinksForReadiness = [
+  "pricing-settings.html#overview",
+  "pricing-settings.html#commercial",
+  "pricing-settings.html#external",
+  "pricing-settings.html#internal",
+  "pricing-settings.html#advanced",
+  "users-dashboard.html",
+  "admin-settings.html#integrations",
+  "quote-review.html"
+];
+
 function initHelp(): void {
   const content = document.querySelector<HTMLElement>("#helpContent");
   if (!content) return;
 
-  const topics = [
-    {
-      title: "Commercial rate card",
-      text: "Customer selling price starts from Time Trucking's approved commercial rate card. Internal operating costs are analysis only unless Henning approves a pricing rule."
-    },
-    {
-      title: "Day vs km",
-      text: "The engine keeps the day-vs-km choice review-required until Henning confirms the exact rule for choosing between the two commercial bases."
-    },
-    {
-      title: "Depot and return route",
-      text: "Operational review uses depot to pickup to delivery to depot. Return loads and backloads are recorded, but no discount or uplift is applied without an approved rule."
-    },
-    {
-      title: "Diesel",
-      text: "Official DMPR diesel values feed the diesel reference. Manual overrides remain controlled and must not replace validated official records with zero or blank values."
-    },
-    {
-      title: "Tolls",
-      text: "Automatic tolls use official South African toll data when the route, toll class, and matching evidence are reliable. Otherwise the quote remains review-required."
-    },
-    {
-      title: "External charges",
-      text: "Crane, refrigeration, third-party handling, high-value insurance, permits, and cross-border external costs stay manual or review-required unless an approved source/rule exists."
-    },
-    {
-      title: "Customer quote safety",
-      text: "Customer pages must show the quote price and service terms only. Internal cost, margin, contribution, source snapshots, and manager warnings stay inside Quote Review."
-    },
-    {
-      title: "VAT",
-      text: "South African VAT is configured as a source-backed pricing setting and should be changed only when the official authority rate changes."
-    },
-    {
-      title: "How do I accept my invitation?",
-      text: "Open the Time Trucking invitation email and choose Accept invitation. The link opens the Time Trucking password page, where you create your own password."
-    },
-    {
-      title: "How do I create my password?",
-      text: "Use the Create your password page from your invitation or reset email. Owners and managers never choose or see another user's password."
-    },
-    {
-      title: "How do I log in?",
-      text: "Open the internal login page, enter your email and password, and the portal checks that your Time Trucking access record is active."
-    },
-    {
-      title: "I forgot my password",
-      text: "Use Forgot password on the login page. The email link opens the Time Trucking password page so you can set a new password."
-    },
-    {
-      title: "My invitation expired",
-      text: "Ask a Time Trucking Owner to open Users & Access and send a new setup link. Expired links do not expose account details."
-    },
-    {
-      title: "I did not receive my invitation",
-      text: "Check spam first. If it is missing, an Owner can resend a setup link from Users & Access without recreating your account."
-    },
-    {
-      title: "How does an Owner resend an invitation?",
-      text: "Open Users & Access, find the user, and choose Send setup link. The user receives a secure email and creates their own password."
-    }
-  ];
+  const searchInput = document.querySelector<HTMLInputElement>("#assistantSearch");
+  const categoriesHost = document.querySelector<HTMLElement>("#assistantCategories");
+  const contextHost = document.querySelector<HTMLElement>("#assistantContext");
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialQuery = urlParams.get("q") ?? "";
+  const context = urlParams.get("context") ?? "";
+  const categories = ["All", ...Array.from(new Set(helpKnowledgeBase.map((topic) => topic.category)))];
+  let activeCategory = "All";
 
-  content.innerHTML = `
-    <div class="help-topic-grid">
-      ${topics.map((topic) => `
-        <article class="summary-block">
-          <h3>${escapeHtml(topic.title)}</h3>
-          <p>${escapeHtml(topic.text)}</p>
-        </article>
-      `).join("")}
-    </div>
-  `;
+  const scoreTopic = (topic: HelpTopic, query: string): number => {
+    let score = topic.contexts?.includes(context) ? 18 : 0;
+    if (!query) return score + (topic.category === "Troubleshooting" ? 2 : 1);
+    const searchText = normalizeHelpText([
+      topic.title,
+      topic.category,
+      topic.summary,
+      ...topic.aliases,
+      ...topic.keywords,
+      ...(topic.blockerCodes ?? [])
+    ].join(" "));
+    const titleText = normalizeHelpText(topic.title);
+    for (const token of query.split(" ").filter(Boolean)) {
+      if (titleText.includes(token)) score += 8;
+      if (searchText.includes(token)) score += 3;
+    }
+    if (searchText.includes(query)) score += 10;
+    return score;
+  };
+
+  const renderRoleNotice = (topic: HelpTopic): string => {
+    if (!topic.permission || roleAllowsHelpTopic(topic)) return topic.roleNote ? `<p class="assistant-note">${escapeHtml(topic.roleNote)}</p>` : "";
+    const role = currentInternalUser?.role ?? "not signed in";
+    return `<p class="assistant-warning">This action needs ${escapeHtml(topic.permission.replace(/_/g, " "))} access. Your current role is ${escapeHtml(role)}. Ask an Owner if this is part of your job.</p>`;
+  };
+
+  const renderTopic = (topic: HelpTopic, index: number): string => {
+    const href = helpTopicHref(topic);
+    const open = index === 0 ? " open" : "";
+    return `
+      <details class="assistant-topic"${open} data-topic-id="${escapeHtml(topic.id)}">
+        <summary>
+          <span>
+            <strong>${escapeHtml(topic.title)}</strong>
+            <small>${escapeHtml(topic.category)}</small>
+          </span>
+        </summary>
+        <p>${escapeHtml(topic.summary)}</p>
+        ${renderRoleNotice(topic)}
+        <ol>
+          ${topic.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}
+        </ol>
+        ${(topic.warnings ?? []).map((warning) => `<p class="assistant-warning">${escapeHtml(warning)}</p>`).join("")}
+        ${(topic.blockerCodes ?? []).length ? `
+          <div class="assistant-blockers">
+            <strong>Related blocker text</strong>
+            <ul>${(topic.blockerCodes ?? []).map((code) => `<li>${escapeHtml(code)}</li>`).join("")}</ul>
+          </div>
+        ` : ""}
+        <div class="button-row">
+          ${href ? `<a class="button small primary" href="./${escapeHtml(href)}">Open ${escapeHtml(topic.page?.replace(".html", "") ?? "page")}</a>` : ""}
+          ${(topic.related ?? []).map((relatedId) => {
+            const related = helpKnowledgeBase.find((candidate) => candidate.id === relatedId);
+            return related ? `<button type="button" class="button small" data-assistant-related="${escapeHtml(related.id)}">${escapeHtml(related.title)}</button>` : "";
+          }).join("")}
+        </div>
+      </details>
+    `;
+  };
+
+  const render = (): void => {
+    const query = normalizeHelpText(searchInput?.value ?? "");
+    const scored = helpKnowledgeBase
+      .filter((topic) => activeCategory === "All" || topic.category === activeCategory)
+      .map((topic) => ({ topic, score: scoreTopic(topic, query) }))
+      .filter((entry) => !query || entry.score > 0)
+      .sort((a, b) => b.score - a.score || a.topic.title.localeCompare(b.topic.title));
+    const visible = scored.slice(0, query ? 12 : 18).map((entry) => entry.topic);
+    content.innerHTML = visible.length ? `
+      <div class="assistant-result-meta">${visible.length} of ${helpKnowledgeBase.length} guided answers shown</div>
+      <div class="assistant-results">
+        ${visible.map((topic, index) => renderTopic(topic, index)).join("")}
+      </div>
+    ` : `
+      <div class="empty-state">
+        <h3>No guided answer matched that search.</h3>
+        <p class="muted">Try words such as quote, blocked, Semi rate, toll, diesel, invite, password, email, depot, return load, permit, or internal cost.</p>
+      </div>
+    `;
+    content.querySelectorAll<HTMLButtonElement>("[data-assistant-related]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const related = helpKnowledgeBase.find((topic) => topic.id === button.dataset.assistantRelated);
+        if (!related || !searchInput) return;
+        activeCategory = "All";
+        searchInput.value = related.title;
+        renderCategories();
+        render();
+        searchInput.focus();
+      });
+    });
+  };
+
+  function renderCategories(): void {
+    if (!categoriesHost) return;
+    categoriesHost.innerHTML = categories.map((category) => `
+      <button type="button" class="${category === activeCategory ? "active" : ""}" data-assistant-category="${escapeHtml(category)}">
+        ${escapeHtml(category)}
+      </button>
+    `).join("");
+    categoriesHost.querySelectorAll<HTMLButtonElement>("[data-assistant-category]").forEach((button) => {
+      button.addEventListener("click", () => {
+        activeCategory = button.dataset.assistantCategory ?? "All";
+        renderCategories();
+        render();
+      });
+    });
+  }
+
+  if (contextHost) {
+    const contextTopics = helpKnowledgeBase.filter((topic) => topic.contexts?.includes(context));
+    contextHost.innerHTML = contextTopics.length ? `
+      <div class="assistant-context-card">
+        <strong>Showing help for ${escapeHtml(context.replace(/-/g, " "))}</strong>
+        <span>${contextTopics.length} relevant guided answers are prioritized.</span>
+      </div>
+    ` : "";
+  }
+
+  if (searchInput) {
+    searchInput.value = initialQuery;
+    searchInput.addEventListener("input", render);
+  }
+  document.querySelectorAll<HTMLButtonElement>("[data-assistant-query]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!searchInput) return;
+      activeCategory = "All";
+      searchInput.value = button.dataset.assistantQuery ?? "";
+      renderCategories();
+      render();
+      searchInput.focus();
+    });
+  });
+
+  renderCategories();
+  render();
 }
 
 async function bootstrap(): Promise<void> {

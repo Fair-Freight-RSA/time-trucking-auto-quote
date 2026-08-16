@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Help - Time Trucking Auto-Quote</title>
+    <title>Time Trucking Assistant - Time Trucking Auto-Quote</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body data-page="help">
@@ -24,12 +24,31 @@
       </header>
       <main class="content">
         <section class="hero">
-          <p class="eyebrow">Internal guide</p>
-          <h1>Time Trucking quoting help</h1>
-          <p class="muted">Short operational guidance for pricing, route review, diesel, tolls, external charges, and customer quote safety.</p>
+          <p class="eyebrow">Internal guided assistant</p>
+          <h1>Time Trucking Assistant</h1>
+          <p class="muted">Search Time Trucking workflows, pricing rules, route blockers, invitation steps, settings, and role permissions.</p>
         </section>
-        <section class="card">
-          <div class="card-heading"><h2>Help topics</h2><span>Internal use only</span></div>
+        <section class="card assistant-panel">
+          <div class="card-heading"><h2>How can I help?</h2><span>Internal use only</span></div>
+          <label class="field">
+            <span>Search help</span>
+            <input
+              id="assistantSearch"
+              type="search"
+              autocomplete="off"
+              placeholder="Try: create a quote, change Semi rates, invite a user, email setup, why is this quote blocked?"
+            />
+          </label>
+          <div class="assistant-shortcuts" aria-label="Common help shortcuts">
+            <button type="button" data-assistant-query="create quote">Create a quote</button>
+            <button type="button" data-assistant-query="quote blocked review required">Why is this quote blocked?</button>
+            <button type="button" data-assistant-query="change commercial rates semi rate card">Change commercial rates</button>
+            <button type="button" data-assistant-query="invite user create password">Invite a user</button>
+            <button type="button" data-assistant-query="connect email integration">Connect email</button>
+            <button type="button" data-assistant-query="return load backload">Return loads</button>
+          </div>
+          <div id="assistantContext" class="assistant-context"></div>
+          <div id="assistantCategories" class="assistant-categories" aria-label="Help categories"></div>
           <div id="helpContent"></div>
         </section>
       </main>
